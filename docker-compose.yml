@@ -1,0 +1,100 @@
+services:
+  # ─── Infrastructure ─────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: orchestrator
+      POSTGRES_PASSWORD: orchestrator
+      POSTGRES_DB: orchestrator
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── code-server (VS Code in browser) ───────────────────────────
+  code-server:
+    image: codercom/code-server:4.96.4
+    container_name: orchestrator-code-server
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount the local workspaces dir (matches WORKSPACES_ROOT in apps/api/.env)
+      - /tmp/orchestrator-workspaces:/home/coder/workspaces
+      # Persist code-server settings & extensions across restarts
+      - code_server_data:/home/coder/.local/share/code-server
+      - code_server_config:/home/coder/.config
+    environment:
+      PASSWORD: ${CODE_SERVER_PASSWORD:-changeme}
+    user: "0:0"
+    restart: unless-stopped
+    command: >
+      --bind-addr 0.0.0.0:8080
+      --auth password
+      --disable-telemetry
+      --disable-update-check
+      /home/coder/workspaces
+
+  # ─── Orchestrator API ────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://orchestrator:orchestrator@postgres:5432/orchestrator
+      REDIS_URL: redis://redis:6379
+      WORKSPACES_ROOT: /workspaces
+      CORS_ORIGINS: http://localhost:3000,http://web:3000
+      CODE_SERVER_URL: ${CODE_SERVER_URL:-http://localhost:8080}
+      # Inject at runtime:
+      # GITHUB_TOKEN: ${GITHUB_TOKEN}
+    volumes:
+      - workspaces:/workspaces
+      # Mount /home read-only so API can list files in user projects
+      - /home:/home:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Nuxt Dashboard ─────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NUXT_PUBLIC_API_BASE: http://localhost:3001
+      NUXT_PUBLIC_WS_BASE: ws://localhost:3001
+      NUXT_PUBLIC_CODE_SERVER_URL: ${CODE_SERVER_URL:-http://localhost:8080}
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  workspaces:
+  code_server_data:
+  code_server_config:

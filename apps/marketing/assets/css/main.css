@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.35);
+  color: inherit;
+}
+
+/* Scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 4px; }
+
+/* ============================================================
+   Marketing helpers
+   ============================================================ */
+
+@layer components {
+  .container-page {
+    @apply max-w-[1200px] mx-auto px-6 sm:px-8;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2
+           h-10 px-4 rounded-lg
+           bg-white text-black font-medium text-sm
+           hover:bg-white/90 transition
+           shadow-md;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2
+           h-10 px-4 rounded-lg
+           bg-surface-elevated text-text-primary font-medium text-sm
+           border border-border-strong
+           hover:bg-surface-hover transition;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5
+           text-sm text-text-secondary hover:text-text-primary transition;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 px-3 py-1 rounded-full
+           text-[11px] font-medium tracking-wider uppercase
+           text-text-secondary
+           bg-surface-elevated border border-border-strong;
+  }
+
+  .card {
+    @apply bg-surface-elevated border border-border rounded-2xl;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(180deg, #ffffff 0%, rgba(255,255,255,0.65) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+
+  .text-gradient-indigo {
+    background: linear-gradient(135deg, #a5b4fc 0%, #8b5cf6 50%, #6366f1 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+
+  .radial-fade {
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+
+  .glow-orb {
+    background: radial-gradient(circle, rgba(99,102,241,0.45) 0%, rgba(139,92,246,0.18) 35%, transparent 70%);
+    filter: blur(40px);
+  }
+}
+
+/* Subtle floating animation for 3D icons */
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.animate-float { animation: float-y 6s ease-in-out infinite; }
+.animate-float-slow { animation: float-y 9s ease-in-out infinite; }

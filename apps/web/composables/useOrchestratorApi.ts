@@ -36,7 +36,7 @@ export function useOrchestratorApi() {
 
   // Auto-load token from server auth.json if not set (runs once per app session)
   if (!githubToken.value && import.meta.client) {
-    fetch(`${baseUrl}/api/auth/token`)
+    fetch(`${baseUrl}/api/copilot/token`)
       .then((r) => r.ok ? r.json() : null)
       .then((data: { token: string } | null) => {
         if (data?.token) githubToken.value = data.token;

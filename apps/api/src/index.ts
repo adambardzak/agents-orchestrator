@@ -10,6 +10,7 @@ import { runMigrations } from './db/migrate.js';
 // Plugins
 import redisPlugin from './plugins/redis.js';
 import servicesPlugin from './plugins/services.js';
+import authPlugin from './plugins/auth.js';
 
 // Routes
 import { sessionRoutes } from './routes/sessions.js';
@@ -17,9 +18,10 @@ import { taskRoutes } from './routes/tasks.js';
 import { agentRoutes } from './routes/agents.js';
 import { projectRoutes } from './routes/projects.js';
 import { wsRoutes } from './routes/websocket.js';
-import { authRoutes } from './routes/auth.js';
+import { copilotAuthRoutes } from './routes/auth.js';
 import { costRoutes } from './routes/costs.js';
 import { ticketRoutes } from './routes/tickets.js';
+import { organizationRoutes } from './routes/organizations.js';
 
 async function buildApp() {
   const fastify = Fastify({
@@ -58,15 +60,19 @@ async function buildApp() {
   // Services (OpenCodeProcessManager, EventBus, CostTracker, TaskQueue)
   await fastify.register(servicesPlugin);
 
+  // Auth (Better Auth + request.user/session decorators) — must be before routes
+  await fastify.register(authPlugin);
+
   // Routes
   await fastify.register(sessionRoutes);
   await fastify.register(taskRoutes);
   await fastify.register(agentRoutes);
   await fastify.register(projectRoutes);
   await fastify.register(wsRoutes);
-  await fastify.register(authRoutes);
+  await fastify.register(copilotAuthRoutes);
   await fastify.register(costRoutes);
   await fastify.register(ticketRoutes);
+  await fastify.register(organizationRoutes);
 
   // Health check
   fastify.get('/health', async () => ({

@@ -20,9 +20,9 @@ interface AuthJson {
   };
 }
 
-export async function authRoutes(fastify: FastifyInstance): Promise<void> {
+export async function copilotAuthRoutes(fastify: FastifyInstance): Promise<void> {
   /**
-   * GET /api/auth/token
+   * GET /api/copilot/token
    *
    * Reads the OpenCode auth.json from the server filesystem and returns
    * the GitHub Copilot access token. This lets the web frontend auto-populate
@@ -30,8 +30,11 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
    *
    * Only available in development (NODE_ENV !== 'production').
    * In production, tokens should be passed via env var or a proper secret store.
+   *
+   * NOTE: Path renamed from `/api/auth/token` (which is now used by Better Auth)
+   * to `/api/copilot/token`. Frontend updated accordingly.
    */
-  fastify.get('/api/auth/token', async (_request, reply) => {
+  fastify.get('/api/copilot/token', async (_request, reply) => {
     try {
       const raw = await fs.readFile(AUTH_JSON_PATH, 'utf-8');
       const auth = JSON.parse(raw) as AuthJson;

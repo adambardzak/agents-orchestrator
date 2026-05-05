@@ -100,7 +100,7 @@ onMounted(async () => {
   if (!githubToken.value) {
     autoDetectStatus.value = 'loading';
     try {
-      const res = await fetch(`${apiBase}/api/auth/token`);
+      const res = await fetch(`${apiBase}/api/copilot/token`);
       if (res.ok) {
         const data = await res.json() as { token: string };
         githubToken.value = data.token;

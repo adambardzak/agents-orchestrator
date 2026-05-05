@@ -1,0 +1,23 @@
+{
+  "name": "agent-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coding Agent Orchestrator — multi-agent system powered by OpenCode",
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "dev:api": "pnpm --filter api dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:marketing": "pnpm --filter marketing dev",
+    "build": "pnpm --filter shared build && pnpm --parallel --filter './apps/*' build",
+    "type-check": "pnpm --recursive type-check",
+    "lint": "pnpm --recursive lint"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

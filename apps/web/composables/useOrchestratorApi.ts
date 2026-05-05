@@ -36,7 +36,7 @@ export function useOrchestratorApi() {
 
   // Auto-load token from server auth.json if not set (runs once per app session)
   if (!githubToken.value && import.meta.client) {
-    fetch(`${baseUrl}/api/copilot/token`)
+    fetch(`${baseUrl}/api/copilot/token`, { credentials: 'include' })
       .then((r) => r.ok ? r.json() : null)
       .then((data: { token: string } | null) => {
         if (data?.token) githubToken.value = data.token;
@@ -49,10 +49,24 @@ export function useOrchestratorApi() {
     ...(githubToken.value ? { 'x-github-token': githubToken.value } : {}),
   }));
 
-  async function listProjects(): Promise<{ projects: Project[]; codeServerUrl: string }> {
-    const res = await fetch(`${baseUrl}/api/projects`, {
-      headers: defaultHeaders.value,
+  /**
+   * Wrapper around fetch() that always sends credentials (cookies) so that
+   * Better Auth's session cookie travels with every API call, and merges in
+   * the default headers (Content-Type + GitHub token).
+   */
+  function req(path: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(`${baseUrl}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        ...defaultHeaders.value,
+        ...(init.headers ?? {}),
+      },
     });
+  }
+
+  async function listProjects(): Promise<{ projects: Project[]; codeServerUrl: string }> {
+    const res = await req('/api/projects');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<{ projects: Project[]; codeServerUrl: string }>;
   }
@@ -63,11 +77,9 @@ export function useOrchestratorApi() {
     contextType?: 'personal' | 'cez';
     workspacePath?: string;
   }): Promise<Project> {
-    const res = await fetch(`${baseUrl}/api/projects`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-      body: JSON.stringify(payload),
-    });
+    const res = await req('/api/projects', { method: 'POST',
+      
+      body: JSON.stringify(payload) });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -76,19 +88,14 @@ export function useOrchestratorApi() {
   }
 
   async function deleteProject(id: string): Promise<void> {
-    const res = await fetch(`${baseUrl}/api/projects/${id}`, {
-      method: 'DELETE',
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/projects/${id}', { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function listProjectFiles(
     projectId: string,
   ): Promise<{ workspacePath: string; tree: FileNode[] }> {
-    const res = await fetch(`${baseUrl}/api/projects/${projectId}/files`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/projects/${projectId}/files');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<{ workspacePath: string; tree: FileNode[] }>;
   }
@@ -106,11 +113,9 @@ export function useOrchestratorApi() {
   }
 
   async function createSession(payload: CreateSessionRequest): Promise<CreateSessionResponse> {
-    const res = await fetch(`${baseUrl}/api/sessions`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-      body: JSON.stringify(payload),
-    });
+    const res = await req('/api/sessions', { method: 'POST',
+      
+      body: JSON.stringify(payload) });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: 'Unknown error' }));
@@ -125,83 +130,59 @@ export function useOrchestratorApi() {
     if (opts?.limit) params.set('limit', String(opts.limit));
     if (opts?.projectId) params.set('projectId', opts.projectId);
     const qs = params.toString() ? `?${params.toString()}` : '';
-    const res = await fetch(`${baseUrl}/api/sessions${qs}`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/sessions${qs}');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<ListSessionsResponse>;
   }
 
   async function getSession(sessionId: string): Promise<GetSessionResponse> {
-    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/sessions/${sessionId}');
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<GetSessionResponse>;
   }
 
   async function cancelSession(sessionId: string): Promise<void> {
-    await fetch(`${baseUrl}/api/sessions/${sessionId}`, {
-      method: 'DELETE',
-      headers: defaultHeaders.value,
-    });
+    await req('/api/sessions/${sessionId}', { method: 'DELETE' });
   }
 
   async function deleteSession(sessionId: string): Promise<void> {
-    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}`, {
-      method: 'DELETE',
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/sessions/${sessionId}', { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function listAgents(): Promise<ListAgentsResponse> {
-    const res = await fetch(`${baseUrl}/api/agents`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/agents');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<ListAgentsResponse>;
   }
 
   async function pauseTask(taskId: string): Promise<void> {
-    await fetch(`${baseUrl}/api/tasks/${taskId}/pause`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-    });
+    await req('/api/tasks/${taskId}/pause', { method: 'POST' });
   }
 
   async function stopTask(taskId: string): Promise<void> {
-    await fetch(`${baseUrl}/api/tasks/${taskId}/stop`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-    });
+    await req('/api/tasks/${taskId}/stop', { method: 'POST' });
   }
 
   async function createAgent(agent: Partial<AgentDefinition>): Promise<AgentDefinition> {
-    const res = await fetch(`${baseUrl}/api/agents`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-      body: JSON.stringify(agent),
-    });
+    const res = await req('/api/agents', { method: 'POST',
+      
+      body: JSON.stringify(agent) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<AgentDefinition>;
   }
 
   async function updateAgent(id: string, updates: Partial<AgentDefinition>): Promise<AgentDefinition> {
-    const res = await fetch(`${baseUrl}/api/agents/${id}`, {
-      method: 'PATCH',
-      headers: defaultHeaders.value,
-      body: JSON.stringify(updates),
-    });
+    const res = await req('/api/agents/${id}', { method: 'PATCH',
+      
+      body: JSON.stringify(updates) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<AgentDefinition>;
   }
 
   async function listSkills(): Promise<{ skills: AgentSkill[] }> {
-    const res = await fetch(`${baseUrl}/api/skills`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/skills');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<{ skills: AgentSkill[] }>;
   }
@@ -210,9 +191,7 @@ export function useOrchestratorApi() {
     servers: Array<{ id: string; name: string; description: string; category: string }>;
     categories: Array<{ id: string; label: string; icon: string }>;
   }> {
-    const res = await fetch(`${baseUrl}/api/mcp-servers`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/mcp-servers');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<{
       servers: Array<{ id: string; name: string; description: string; category: string }>;
@@ -221,25 +200,18 @@ export function useOrchestratorApi() {
   }
 
   async function approveTask(taskId: string): Promise<void> {
-    const res = await fetch(`${baseUrl}/api/tasks/${taskId}/approve`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/tasks/${taskId}/approve', { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function rejectTask(taskId: string): Promise<void> {
-    const res = await fetch(`${baseUrl}/api/tasks/${taskId}/reject`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/tasks/${taskId}/reject', { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function injectToTask(taskId: string, message: string): Promise<{ injected: boolean }> {
-    const res = await fetch(`${baseUrl}/api/tasks/${taskId}/inject`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
+    const res = await req('/api/tasks/${taskId}/inject', { method: 'POST',
+      
       body: JSON.stringify({ message }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -250,9 +222,8 @@ export function useOrchestratorApi() {
     sessionId: string,
     answers: Record<string, string>,
   ): Promise<{ task: unknown }> {
-    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/clarify`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
+    const res = await req('/api/sessions/${sessionId}/clarify', { method: 'POST',
+      
       body: JSON.stringify({ answers }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -261,17 +232,13 @@ export function useOrchestratorApi() {
 
   // ── Tickets ──────────────────────────────────────────────────────────────
   async function listTickets(sessionId: string): Promise<ListTicketsResponse> {
-    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/tickets`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/sessions/${sessionId}/tickets');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<ListTicketsResponse>;
   }
 
   async function getTicket(ticketId: string): Promise<GetTicketResponse> {
-    const res = await fetch(`${baseUrl}/api/tickets/${ticketId}`, {
-      headers: defaultHeaders.value,
-    });
+    const res = await req('/api/tickets/${ticketId}');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<GetTicketResponse>;
   }
@@ -280,9 +247,8 @@ export function useOrchestratorApi() {
     ticketId: string,
     body: string,
   ): Promise<{ comment: TicketComment }> {
-    const res = await fetch(`${baseUrl}/api/tickets/${ticketId}/comments`, {
-      method: 'POST',
-      headers: defaultHeaders.value,
+    const res = await req('/api/tickets/${ticketId}/comments', { method: 'POST',
+      
       body: JSON.stringify({ body }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -293,9 +259,8 @@ export function useOrchestratorApi() {
     ticketId: string,
     status: TicketStatus,
   ): Promise<{ ticket: Ticket }> {
-    const res = await fetch(`${baseUrl}/api/tickets/${ticketId}/status`, {
-      method: 'PATCH',
-      headers: defaultHeaders.value,
+    const res = await req('/api/tickets/${ticketId}/status', { method: 'PATCH',
+      
       body: JSON.stringify({ status }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -306,9 +271,8 @@ export function useOrchestratorApi() {
     ticketId: string,
     comment?: string,
   ): Promise<{ ticket: Ticket; taskId: string }> {
-    const res = await fetch(`${baseUrl}/api/tickets/${ticketId}/reopen`, {
+    const res = await req(`/api/tickets/${ticketId}/reopen`, {
       method: 'POST',
-      headers: defaultHeaders.value,
       body: JSON.stringify(comment ? { comment } : {}),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

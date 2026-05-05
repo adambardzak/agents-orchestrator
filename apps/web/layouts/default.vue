@@ -17,23 +17,62 @@
       </div>
 
       <!-- Workspace selector -->
-      <div class="px-3 pt-3 pb-2">
+      <div class="px-3 pt-3 pb-2 relative">
         <button
           class="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-hover transition group"
-          @click="navigateTo('/projects')"
+          @click="orgMenuOpen = !orgMenuOpen"
         >
-          <UIcon
-            name="i-ph-folder-open-light"
-            class="w-4 h-4 text-text-secondary group-hover:text-text-primary"
-          />
+          <div class="w-5 h-5 rounded bg-gradient-to-br from-indigo-500/80 to-violet-600/80 flex items-center justify-center text-[10px] font-semibold text-white shrink-0">
+            {{ orgInitial }}
+          </div>
           <span class="flex-1 text-left text-sm font-medium truncate">
-            {{ projectStore.activeProject?.name ?? 'No project' }}
+            {{ auth.activeOrg.value?.name ?? 'No workspace' }}
           </span>
           <UIcon
             name="i-ph-caret-up-down-light"
             class="w-3.5 h-3.5 text-text-faint"
           />
         </button>
+
+        <!-- Org dropdown -->
+        <div
+          v-if="orgMenuOpen"
+          class="absolute left-3 right-3 top-[calc(100%-4px)] z-30 mt-1 bg-surface-elevated border border-border-strong rounded-md shadow-pop overflow-hidden"
+          @click.stop
+        >
+          <div class="py-1 max-h-64 overflow-y-auto">
+            <button
+              v-for="org in auth.orgs.value"
+              :key="org.id"
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-surface-hover transition text-left"
+              :class="org.id === auth.activeOrgId.value ? 'bg-surface-active text-text-primary' : 'text-text-secondary'"
+              @click="switchOrg(org.id)"
+            >
+              <div class="w-5 h-5 rounded bg-gradient-to-br from-indigo-500/80 to-violet-600/80 flex items-center justify-center text-[10px] font-semibold text-white shrink-0">
+                {{ org.name.charAt(0).toUpperCase() }}
+              </div>
+              <span class="flex-1 truncate">{{ org.name }}</span>
+              <span class="text-[10px] uppercase tracking-wider text-text-faint">{{ org.role }}</span>
+              <UIcon
+                v-if="org.id === auth.activeOrgId.value"
+                name="i-ph-check-light"
+                class="w-3.5 h-3.5 text-completed"
+              />
+            </button>
+            <div v-if="auth.orgs.value.length === 0" class="px-2.5 py-2 text-xs text-text-faint">
+              No workspaces yet.
+            </div>
+          </div>
+          <div class="border-t border-border py-1">
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
+              @click="createWorkspace"
+            >
+              <UIcon name="i-ph-plus-light" class="w-3.5 h-3.5" />
+              Create workspace
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Nav -->
@@ -118,8 +157,8 @@
         </div>
       </div>
 
-      <!-- Theme + context switcher -->
-      <div class="px-3 py-2 border-t border-border flex items-center gap-2">
+      <!-- Theme + user menu -->
+      <div class="px-3 py-2 border-t border-border flex items-center gap-2 relative">
         <button
           class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
           @click="toggleColorMode"
@@ -130,13 +169,43 @@
           />
           {{ isDark ? 'Light' : 'Dark' }}
         </button>
-        <select
-          v-model="contextType"
-          class="flex-1 bg-surface-hover border border-border rounded-md px-2 py-1 text-xs text-text-secondary focus:outline-none focus:border-accent"
+        <button
+          class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
+          @click="userMenuOpen = !userMenuOpen"
         >
-          <option value="personal">Personal</option>
-          <option value="cez">CEZ</option>
-        </select>
+          <div class="w-4 h-4 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-[9px] font-semibold text-white shrink-0">
+            {{ userInitial }}
+          </div>
+          <span class="truncate max-w-[80px]">{{ auth.user.value?.name ?? auth.user.value?.email ?? 'You' }}</span>
+        </button>
+
+        <!-- User dropdown -->
+        <div
+          v-if="userMenuOpen"
+          class="absolute left-3 right-3 bottom-[calc(100%-4px)] z-30 mb-1 bg-surface-elevated border border-border-strong rounded-md shadow-pop overflow-hidden"
+          @click.stop
+        >
+          <div class="px-3 py-2 border-b border-border">
+            <p class="text-sm font-medium truncate">{{ auth.user.value?.name ?? 'Anonymous' }}</p>
+            <p class="text-xs text-text-faint truncate">{{ auth.user.value?.email }}</p>
+          </div>
+          <div class="py-1">
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition text-left"
+              @click="navigateTo('/settings'); userMenuOpen = false"
+            >
+              <UIcon name="i-ph-gear-six-light" class="w-3.5 h-3.5" />
+              Settings
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-failed hover:bg-failed/10 transition text-left"
+              @click="signOutAndRedirect"
+            >
+              <UIcon name="i-ph-sign-out-light" class="w-3.5 h-3.5" />
+              Sign out
+            </button>
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -299,12 +368,65 @@ import type {
 const sessionStore = useSessionStore();
 const projectStore = useProjectStore();
 const apiStore     = reactive(useOrchestratorApi());
+const auth         = useAuth();
 const config       = useRuntimeConfig();
 const route        = useRoute();
 const colorMode    = useColorMode();
 
-const contextType = ref<'personal' | 'cez'>('personal');
-const stopping    = ref(false);
+const stopping     = ref(false);
+const orgMenuOpen  = ref(false);
+const userMenuOpen = ref(false);
+
+// Close menus on route change or outside click
+watch(() => route.fullPath, () => {
+  orgMenuOpen.value = false;
+  userMenuOpen.value = false;
+});
+if (import.meta.client) {
+  window.addEventListener('click', () => {
+    orgMenuOpen.value = false;
+    userMenuOpen.value = false;
+  });
+}
+
+const orgInitial = computed(() => (auth.activeOrg.value?.name ?? 'W').charAt(0).toUpperCase());
+const userInitial = computed(() => {
+  const u = auth.user.value;
+  return ((u?.name ?? u?.email ?? '?').charAt(0)).toUpperCase();
+});
+
+async function switchOrg(orgId: string) {
+  orgMenuOpen.value = false;
+  if (orgId === auth.activeOrgId.value) return;
+  try {
+    await auth.setActiveOrg(orgId);
+    // Reload projects for the new org context
+    const { projects } = await apiStore.listProjects();
+    projectStore.setProjects(projects);
+  } catch (e) { console.error('Switch org failed:', e); }
+}
+
+async function createWorkspace() {
+  orgMenuOpen.value = false;
+  const name = window.prompt('Workspace name');
+  if (!name?.trim()) return;
+  try {
+    await auth.createOrg(name.trim());
+    const { projects } = await apiStore.listProjects();
+    projectStore.setProjects(projects);
+  } catch (e) {
+    window.alert(`Failed to create workspace: ${e instanceof Error ? e.message : 'unknown error'}`);
+  }
+}
+
+async function signOutAndRedirect() {
+  userMenuOpen.value = false;
+  try {
+    await auth.signOut();
+  } finally {
+    await navigateTo('/auth/login');
+  }
+}
 
 const isDark = computed(() => colorMode.value === 'dark');
 function toggleColorMode() {

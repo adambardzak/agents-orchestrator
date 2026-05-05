@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.output/
+.nuxt/
+.cache/
+*.log
+.env
+.env.local
+.env.production
+
+# pnpm
+.pnpm-store/
+
+# TypeScript
+*.tsbuildinfo
+
+# Docker
+.docker/
+
+# Workspaces (generated at runtime)
+/workspaces/
+
+# OS
+.DS_Store
+Thumbs.db

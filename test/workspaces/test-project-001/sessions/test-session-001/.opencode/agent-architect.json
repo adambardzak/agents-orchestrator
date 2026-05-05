@@ -1,0 +1,46 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/claude-opus-4.6",
+  "provider": {
+    "github-copilot": {
+      "options": {
+        "apiKey": "ghp_test_token"
+      }
+    }
+  },
+  "mcp": {
+    "filesystem": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/workspace"
+      ],
+      "enabled": true
+    },
+    "git": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-git",
+        "--repository",
+        "/workspace"
+      ],
+      "enabled": true
+    }
+  },
+  "agent": {
+    "architect": {
+      "model": "github-copilot/claude-opus-4.6",
+      "prompt": "You are a senior software architect.\n\n## Rules\n\n- Always create an ADR for significant decisions\n\n## Model Escalation\nIf this task turns out to be significantly more complex than initially assessed and you need a more powerful model to complete it correctly, output a JSON escalation request on a new line:\n```json\n{\"escalate\": \"expert\", \"reason\": \"brief explanation of why a more powerful model is needed\"}\n```\nOnly escalate if truly necessary — it increases cost. Current model ceiling: expert.\n\n## Limits\n\nComplete the task in at most 25 steps.",
+      "description": "Architect agent",
+      "mode": "primary"
+    }
+  },
+  "permission": {
+    "*": "allow"
+  },
+  "autoupdate": false
+}

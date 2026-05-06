@@ -952,6 +952,438 @@ await gsc.searchanalytics.query({
       'Use domain property (sc-domain:) for full-site data when possible',
     ],
   },
+
+  // ── Backend / Event-driven ──────────────────────────────────────────────
+  {
+    id: 'skill:kafka-patterns',
+    name: 'Kafka Producer/Consumer Patterns',
+    description: 'KafkaJS producer/consumer setup, partitioning, idempotence, dead-letter queues, exactly-once semantics.',
+    icon: 'i-ph-broadcast-light',
+    category: 'backend',
+    knowledgeBlock: `### Kafka Producer/Consumer Patterns (Node.js + KafkaJS)
+
+#### Producer
+
+Always create the client with explicit \`clientId\` (visible in broker logs/metrics) and \`brokers\` array. Use \`ssl\` + \`sasl\` blocks for production — never connect cleartext to a non-localhost broker.
+
+Idempotent producer (REQUIRED for exactly-once-ish):
+\`\`\`ts
+const producer = kafka.producer({
+  idempotent: true,           // dedup retries within a producer session
+  maxInFlightRequests: 5,     // safe with idempotence
+  transactionalId: undefined, // set only if using transactions
+});
+\`\`\`
+
+Partitioning rules:
+- ALWAYS set a deterministic \`key\` for messages that must keep order (entity id, user id, trade id). Without a key, messages round-robin and ordering is lost.
+- Same key → same partition → ordered consumption per partition.
+- For random/parallel work (telemetry, logs), omit key — broker round-robins.
+
+Batching: \`producer.send({ topic, messages: [...] })\` accepts an array. Prefer batches over per-message sends to amortize network overhead.
+
+Error handling:
+- \`acks: -1\` (all in-sync replicas) for durability — default in newer KafkaJS.
+- Retries: KafkaJS retries automatically on transient errors. For business errors (schema validation), DO NOT retry — log + push to DLQ.
+- ALWAYS \`await producer.connect()\` before \`send\`. Do it once at startup, reuse the producer instance.
+- ALWAYS \`producer.disconnect()\` on graceful shutdown (SIGTERM handler).
+
+#### Consumer
+
+Group ID semantics: each \`groupId\` is an independent stream cursor. Multiple consumer processes with the same groupId share partitions (scale-out). Different groupIds get the same messages independently (fan-out).
+
+\`\`\`ts
+const consumer = kafka.consumer({
+  groupId: 'orders-processor',
+  sessionTimeout: 30000,        // member dead if no heartbeat in 30s
+  heartbeatInterval: 3000,      // send heartbeat every 3s
+  maxWaitTimeInMs: 5000,        // max wait per fetch
+});
+await consumer.connect();
+await consumer.subscribe({ topic: 'orders', fromBeginning: false });
+\`\`\`
+
+\`fromBeginning\`:
+- \`true\` for new groupIds → reads entire history. ONLY for backfills.
+- \`false\` (default) → reads from current offset. Standard for live processing.
+
+Manual vs auto commit:
+- DEFAULT: KafkaJS auto-commits after \`eachMessage\` returns successfully.
+- For at-least-once with manual control:
+  \`\`\`ts
+  await consumer.run({
+    autoCommit: false,
+    eachMessage: async ({ topic, partition, message }) => {
+      await processMessage(message);
+      await consumer.commitOffsets([{ topic, partition, offset: (Number(message.offset) + 1).toString() }]);
+    },
+  });
+  \`\`\`
+- NEVER commit before processing succeeds — you'll lose messages on crash.
+
+#### Dead-letter pattern
+
+For poison messages (parse errors, repeated business failures):
+\`\`\`ts
+try {
+  const order = OrderSchema.parse(JSON.parse(message.value!.toString()));
+  await processOrder(order);
+} catch (err) {
+  await dlqProducer.send({
+    topic: 'orders.dlq',
+    messages: [{
+      key: message.key,
+      value: message.value,
+      headers: {
+        ...message.headers,
+        'x-original-topic': topic,
+        'x-error': String(err),
+        'x-failed-at': new Date().toISOString(),
+      },
+    }],
+  });
+  // commit to skip — DLQ owns the message now
+}
+\`\`\`
+
+#### Schema management
+
+For typed payloads use Confluent Schema Registry (Avro/Protobuf) OR enforce Zod schemas at producer + consumer boundaries. NEVER trust raw JSON across services without validation.
+
+#### Common pitfalls
+
+- Forgetting to handle \`CRASH\` event: \`consumer.on(consumer.events.CRASH, (e) => { logger.fatal(e); process.exit(1); });\`
+- Long-running \`eachMessage\` blocks heartbeats → rebalance storm. Either keep handlers fast (<5s) or extend \`sessionTimeout\` and use \`pause()\`/\`resume()\` for backpressure.
+- Topic auto-create in dev hides config drift in prod. Pre-create topics with explicit partitions + retention.
+- Mixing keyed and unkeyed messages on the same topic breaks ordering guarantees consumers expect.
+
+DO NOT:
+- DO NOT use Kafka as a request/response RPC channel — it's an append-only log.
+- DO NOT process messages in parallel within a partition without losing ordering. Use \`partitionsConsumedConcurrently\` only across DIFFERENT partitions.
+- DO NOT store secrets in headers — they're plaintext.
+- DO NOT skip ACL/SASL config in prod just because the broker is "internal".`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS set a deterministic message key when ordering matters',
+      'ALWAYS use idempotent: true on producers',
+      'NEVER commit consumer offset before message processing succeeds',
+      'ALWAYS implement DLQ pattern for poison messages',
+      'NEVER use Kafka as request/response RPC',
+      'ALWAYS validate message payloads with Zod (or schema registry) at consumer boundary',
+      'Keep eachMessage handlers under 5s; use pause()/resume() for backpressure',
+    ],
+  },
+
+  // ── Database / Vector search ────────────────────────────────────────────
+  {
+    id: 'skill:pgvector-rag',
+    name: 'pgvector RAG Patterns',
+    description: 'Postgres pgvector index choice (IVFFlat vs HNSW), embedding storage, hybrid search, distance operators.',
+    icon: 'i-ph-vector-three-light',
+    category: 'database',
+    knowledgeBlock: `### pgvector RAG Patterns
+
+#### Storage
+
+Column type: \`vector(N)\` where N is the embedding dimension. ALWAYS hard-code N to match your model — mismatched dims throw at INSERT, not migration time.
+
+Common dimensions:
+- OpenAI text-embedding-3-small: 1536 (default, can be reduced)
+- OpenAI text-embedding-3-large: 3072
+- Voyage voyage-3-lite: 512
+- Cohere embed-multilingual-v3: 1024
+- BGE-M3: 1024
+
+Schema:
+\`\`\`sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE chunks (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  doc_id    UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  ord       INT  NOT NULL,
+  text      TEXT NOT NULL,
+  embedding vector(1536) NOT NULL,
+  metadata  JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+\`\`\`
+
+#### Distance operators
+
+- \`<->\` L2 / Euclidean
+- \`<#>\` negative inner product (use for normalized vectors → equivalent to cosine, faster)
+- \`<=>\` cosine distance (1 - cosine_similarity)
+
+For OpenAI / most LLM embeddings (already L2-normalized), \`<=>\` and \`<#>\` give equivalent rankings; \`<#>\` is marginally faster.
+
+Convert distance to similarity score for UI: \`(1 - (embedding <=> query_vec))\` returns 0..1 cosine similarity.
+
+#### Index choice — the critical decision
+
+\`\`\`
+                      | IVFFlat                  | HNSW
+----------------------+--------------------------+--------------------------
+Build time            | Fast (~1s/100k rows)     | Slow (~30s/100k rows)
+Build memory          | Low                      | High
+Query speed           | Fast                     | Faster (2-3x)
+Recall                | Good (tune lists/probes) | Excellent
+Updates after build   | Recall degrades          | Stable
+Add rows post-build   | Cheap                    | Expensive (full rebuild
+                      |                          | quality, but online)
+Best for              | Static / batch-rebuilt   | Live / continuous updates
+\`\`\`
+
+**Default choice: HNSW.** Use IVFFlat only if (a) you have >5M vectors AND (b) you can rebuild on a schedule.
+
+\`\`\`sql
+-- HNSW (recommended for most cases)
+CREATE INDEX chunks_embedding_hnsw
+  ON chunks USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+-- IVFFlat (large corpora, infrequent updates)
+-- lists = sqrt(N) is a reasonable starting point for N < 1M
+-- lists = N/1000 for N > 1M
+CREATE INDEX chunks_embedding_ivfflat
+  ON chunks USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
+\`\`\`
+
+#### Query-time tuning
+
+HNSW: \`SET hnsw.ef_search = 40;\` (default 40, raise for better recall, lower for speed)
+IVFFlat: \`SET ivfflat.probes = 10;\` (default 1 → terrible recall; raise to ~sqrt(lists))
+
+ALWAYS set this per-session/transaction, never globally — different queries have different recall needs.
+
+#### Standard retrieval query
+
+\`\`\`sql
+SELECT
+  id,
+  text,
+  metadata,
+  1 - (embedding <=> $1::vector) AS score
+FROM chunks
+WHERE doc_id IN (SELECT id FROM documents WHERE org_id = $2)
+ORDER BY embedding <=> $1::vector
+LIMIT $3;
+\`\`\`
+
+CRITICAL: Filters BEFORE \`ORDER BY embedding <=>\` defeat the index. Pre-filter via JOIN or subquery returning a small candidate set, OR use partial indexes:
+\`\`\`sql
+CREATE INDEX chunks_org42_hnsw
+  ON chunks USING hnsw (embedding vector_cosine_ops)
+  WHERE org_id = 42;
+\`\`\`
+
+For multi-tenant: usually \`embedding <=> $1\` over the full table + post-filter on org_id is faster than per-tenant indexes (unless one tenant dominates).
+
+#### Hybrid search (vector + BM25/keyword)
+
+pgvector + tsvector full-text search merged with Reciprocal Rank Fusion:
+\`\`\`sql
+WITH vec AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $1) AS rank
+  FROM chunks ORDER BY embedding <=> $1 LIMIT 50
+),
+fts AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(tsv, plainto_tsquery($2)) DESC) AS rank
+  FROM chunks WHERE tsv @@ plainto_tsquery($2) LIMIT 50
+)
+SELECT id, COALESCE(1.0/(60 + vec.rank), 0) + COALESCE(1.0/(60 + fts.rank), 0) AS rrf
+FROM vec FULL OUTER JOIN fts USING (id)
+ORDER BY rrf DESC LIMIT 10;
+\`\`\`
+
+#### Chunking discipline
+
+- Chunk size: 1000–2000 chars typical; larger = less precise, smaller = more index bloat.
+- Overlap: 100–250 chars to keep cross-chunk context (sentence on a boundary).
+- Chunk on semantic boundaries (\\n\\n paragraphs, headings) BEFORE falling back to fixed length.
+- Store \`chunk_index\` (ordinal within doc) so you can re-stitch surrounding context for the LLM.
+
+#### Embedding generation
+
+- Batch API calls (OpenAI accepts up to 2048 inputs per request, much cheaper).
+- Cache embeddings keyed by SHA-256 of normalized input — re-runs are common during dev.
+- Re-embed entire corpus when changing model — vectors from different models are NOT interchangeable.
+- Track \`embedding_model\` column so you can detect mixed corpora at query time.
+
+DO NOT:
+- DO NOT mix embedding models in the same index — distances become meaningless.
+- DO NOT index without \`vector_cosine_ops\` / matching distance op the query uses.
+- DO NOT forget to \`SET ivfflat.probes\` — defaults yield ~1% recall.
+- DO NOT pre-filter inside ORDER BY without a partial index — index is bypassed.
+- DO NOT store unnormalized vectors when using \`<#>\` — results are wrong.`,
+    requiredMcpServers: [],
+    rules: [
+      'Default to HNSW index unless you have >5M vectors with rare updates',
+      'ALWAYS SET hnsw.ef_search or ivfflat.probes per query — defaults are bad',
+      'Match index opclass (vector_cosine_ops) to the distance operator (<=>) used at query time',
+      'NEVER mix embedding models in the same index — re-embed everything when switching',
+      'Cache embeddings by content hash to avoid re-paying API costs during development',
+      'Pre-filter via partial indexes or candidate-set CTE — never inline WHERE in ORDER BY',
+      'Always store the source embedding model name in a column for forensics',
+    ],
+  },
+
+  // ── Backend / Multi-tenant SaaS ─────────────────────────────────────────
+  {
+    id: 'skill:multi-tenant-saas',
+    name: 'Multi-tenant SaaS Patterns',
+    description: 'Tenant isolation strategies, RLS, scoped queries, Better Auth orgs, role-based access.',
+    icon: 'i-ph-buildings-light',
+    category: 'backend',
+    knowledgeBlock: `### Multi-tenant SaaS Patterns
+
+#### Isolation strategy decision
+
+Three patterns, in increasing isolation/cost:
+
+1. **Shared schema, tenant_id column** — single DB, single schema, every tenant-owned table has \`organization_id UUID NOT NULL\`. Cheapest, easiest migrations, most leak risk.
+2. **Shared schema, Postgres RLS** — same as above but enforce isolation at the database via row-level security policies. Defense in depth.
+3. **Schema-per-tenant** — \`SET search_path TO tenant_42, public\`. Hard isolation, hard migrations, breaks at ~1000 tenants.
+4. **DB-per-tenant** — full isolation, biggest infra cost. Only for regulated/enterprise tiers.
+
+**Default to #1 with discipline + #2 for sensitive tables.** #3 and #4 are escape hatches you migrate to per-customer when contracts demand.
+
+#### Row-level security (RLS) — the safety net
+
+Even if your application code is perfect, RLS catches the day someone forgets a \`WHERE org_id = $1\`:
+
+\`\`\`sql
+ALTER TABLE knowledge_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_documents FORCE ROW LEVEL SECURITY; -- include table owner
+
+CREATE POLICY tenant_isolation ON knowledge_documents
+  USING (organization_id = current_setting('app.current_org_id')::uuid)
+  WITH CHECK (organization_id = current_setting('app.current_org_id')::uuid);
+\`\`\`
+
+In your request middleware:
+\`\`\`ts
+await client.query("SELECT set_config('app.current_org_id', $1, true)", [req.user.activeOrgId]);
+\`\`\`
+The \`true\` makes it transaction-scoped — never leaks across pooled connections.
+
+CRITICAL: when using a connection pool, EVERY query that touches RLS tables must run inside a transaction OR you must reset the GUC at checkout. Easiest: use a tx wrapper for tenant-scoped requests.
+
+#### Scoped query helper
+
+Don't hand-thread \`org_id\` through every query — wrap it:
+\`\`\`ts
+class TenantScopedDb {
+  constructor(private pool: Pool, private orgId: string) {}
+  async query<T>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_org_id', $1, true)", [this.orgId]);
+      const result = await client.query<T>(sql, params);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+}
+\`\`\`
+
+#### User ↔ Org M:N model
+
+Most SaaS needs one user in many orgs (consultants, agencies, employees switching jobs). Schema:
+\`\`\`sql
+CREATE TABLE organizations (id UUID PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL);
+CREATE TABLE memberships (
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL CHECK (role IN ('owner','admin','member','viewer')),
+  joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, organization_id)
+);
+CREATE INDEX ON memberships(organization_id);
+\`\`\`
+
+Active org: store \`active_org_id\` on the session (NOT on the user — same user has different active orgs in different browser tabs/devices). Validate on every request that user is still a member.
+
+#### Better Auth integration
+
+Better Auth has a first-party \`organization\` plugin:
+\`\`\`ts
+import { organization } from 'better-auth/plugins';
+export const auth = betterAuth({
+  plugins: [organization({
+    allowUserToCreateOrganization: true,
+    organizationLimit: 5, // per user
+    membershipLimit: 100, // per org
+  })],
+});
+\`\`\`
+It exposes \`auth.api.setActiveOrganization({ organizationId })\` and stores it on the session.
+
+In your route handler: \`const session = await auth.api.getSession({ headers }); const orgId = session.session.activeOrganizationId;\` — REJECT requests where this is null.
+
+#### Roles & permissions
+
+Keep it simple at first: 4 roles, hardcoded permission matrix in code:
+\`\`\`ts
+const PERMISSIONS = {
+  owner:  { 'org:delete': true, 'billing:write': true, 'member:invite': true, 'project:write': true, 'project:read': true },
+  admin:  { 'org:delete': false, 'billing:write': true, 'member:invite': true, 'project:write': true, 'project:read': true },
+  member: { 'org:delete': false, 'billing:write': false, 'member:invite': false, 'project:write': true, 'project:read': true },
+  viewer: { 'org:delete': false, 'billing:write': false, 'member:invite': false, 'project:write': false, 'project:read': true },
+} as const;
+
+function can(role: keyof typeof PERMISSIONS, perm: string): boolean {
+  return Boolean(PERMISSIONS[role]?.[perm as keyof typeof PERMISSIONS.owner]);
+}
+\`\`\`
+
+Migrate to per-permission storage (\`role_permissions\` table) ONLY when customers ask for custom roles. Don't over-engineer.
+
+#### Cross-tenant operations
+
+Some endpoints legitimately span tenants (admin dashboards, support tools). Mark them explicitly:
+- Separate route prefix: \`/api/admin/*\` — requires \`is_platform_admin\` flag, NOT org membership.
+- BYPASS RLS via \`SET LOCAL ROLE platform_admin\` (a Postgres role with \`BYPASSRLS\`).
+- LOG every cross-tenant query for audit (org_id_accessed, accessor_user_id, timestamp, sql).
+
+#### Billing per-org
+
+Stripe Customer per organization, not per user. \`organizations.stripe_customer_id\`. Subscription belongs to org. When user is member of multiple orgs, each org has its own bill.
+
+#### Common leak vectors — review checklist
+
+- [ ] Every tenant-owned table has \`organization_id\` + index
+- [ ] Every list endpoint filters by active org
+- [ ] Every detail endpoint validates \`row.organization_id === session.activeOrgId\`
+- [ ] File uploads stored under \`<orgId>/...\` prefix with bucket policy
+- [ ] Background jobs carry \`organization_id\` in payload (not implicit from "current user")
+- [ ] WebSocket subscriptions filter events by org before broadcast
+- [ ] Search/RAG indexes are partitioned or filter by org
+- [ ] Logs/metrics tag \`org_id\` for triage but NEVER include other tenants' data
+
+DO NOT:
+- DO NOT trust client-supplied \`org_id\` query params — always derive from authenticated session
+- DO NOT use auto-incrementing IDs for tenant-owned resources — UUIDs prevent enumeration attacks
+- DO NOT share Redis keys across tenants without prefix (\`org:\${orgId}:cache:...\`)
+- DO NOT skip RLS "because the app filters" — every leak in history started this way`,
+    requiredMcpServers: [],
+    rules: [
+      'Every tenant-owned table MUST have organization_id NOT NULL + index',
+      'Default to shared-schema + tenant_id column; add Postgres RLS for sensitive tables',
+      'NEVER trust client-supplied org_id — always derive from authenticated session',
+      'When using RLS with a connection pool, wrap requests in a transaction with set_config(... true)',
+      'Background jobs MUST carry organization_id in payload — never infer from current user',
+      'Use UUIDs (not auto-increment) for tenant-owned resource IDs',
+      'Active org belongs on the session, not the user — same user can have different active orgs per device',
+      'Stripe Customer per organization, not per user',
+    ],
+  },
 ];
 
 export function getSkillById(id: string): AgentSkill | undefined {

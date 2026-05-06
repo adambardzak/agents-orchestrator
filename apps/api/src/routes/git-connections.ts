@@ -28,6 +28,33 @@ import { env } from '../config/env.js';
 const STATE_COOKIE = 'git_oauth_state';
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 
+/**
+ * Resolve a (typically relative) post-OAuth redirect target against the
+ * configured web origin. The OAuth callback runs on the API origin, but
+ * the SPA lives on a different port (e.g. :3010 in dev), so a relative
+ * path would 404 against the API. We pick the first entry of CORS_ORIGINS
+ * as the canonical web origin — that env var already lists the trusted
+ * SPA origins, so reusing it avoids a parallel WEB_URL config.
+ *
+ * Absolute URLs are passed through only if they match the web origin
+ * (defense in depth against open-redirect via attacker-supplied redirect).
+ */
+function resolveWebRedirect(target: string): string {
+  const webOrigin = (env.CORS_ORIGINS.split(',')[0] ?? '').trim() || 'http://localhost:3000';
+  // Absolute URL: only allow same-origin to prevent open redirect.
+  if (/^https?:\/\//i.test(target)) {
+    try {
+      const u = new URL(target);
+      const allowed = new URL(webOrigin);
+      if (u.origin === allowed.origin) return target;
+    } catch { /* fall through to safe default */ }
+    return webOrigin;
+  }
+  // Relative path: prepend the web origin.
+  const path = target.startsWith('/') ? target : `/${target}`;
+  return `${webOrigin.replace(/\/$/, '')}${path}`;
+}
+
 interface OAuthState {
   provider: GitProviderId;
   userId: string;
@@ -210,7 +237,12 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
           'set-cookie',
           `${STATE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
         );
-        return reply.redirect(stateCookie.redirect);
+        // The OAuth callback hits the API origin (localhost:3002) but the
+        // user lives on the web origin (localhost:3010 in dev). A relative
+        // redirect would land them on the API host and 404. Resolve the
+        // redirect against the configured web origin (first entry of
+        // CORS_ORIGINS) so we always bounce back to the SPA.
+        return reply.redirect(resolveWebRedirect(stateCookie.redirect));
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'unknown';
         request.log.error({ err }, 'OAuth callback failed');

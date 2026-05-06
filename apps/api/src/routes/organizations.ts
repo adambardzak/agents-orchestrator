@@ -50,8 +50,11 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
       const membership = await orgs.getMembership(request.params.id, user.id);
       if (!membership) return reply.status(403).send({ error: 'Not a member of this organization' });
 
-      if (request.session && request.session.id !== 'bootstrap') {
+      // Persist the new active org. In bootstrap dev mode this updates the
+      // synthetic 'bootstrap' session row so the choice survives restarts.
+      if (request.session) {
         await orgs.setActiveOrgForSession(request.session.id, request.params.id);
+        request.session.activeOrganizationId = request.params.id;
       }
       return { activeOrganizationId: request.params.id };
     },

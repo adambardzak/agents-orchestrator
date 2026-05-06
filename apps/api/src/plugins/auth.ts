@@ -79,6 +79,15 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
          ON CONFLICT (organization_id, user_id) DO NOTHING`,
         [BOOTSTRAP_ORG_ID, BOOTSTRAP_USER.id],
       );
+      // Persist a synthetic bootstrap session row so dev mode can remember
+      // the user's last active workspace across API restarts. The row uses a
+      // fixed id ('bootstrap') and never expires for practical purposes.
+      await fastify.pg.pool.query(
+        `INSERT INTO auth_session (id, user_id, token, active_organization_id, expires_at, created_at, updated_at)
+         VALUES ('bootstrap', $1, 'bootstrap', $2, NOW() + INTERVAL '100 years', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [BOOTSTRAP_USER.id, BOOTSTRAP_ORG_ID],
+      );
       fastify.log.info({ userId: BOOTSTRAP_USER.id, orgId: BOOTSTRAP_ORG_ID }, 'bootstrap user/org seeded');
     } catch (err) {
       fastify.log.error({ err }, 'failed to seed bootstrap user/org');
@@ -88,6 +97,36 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
   // 1) Mount Better Auth's request handler. It expects a Web Fetch Request
   //    and returns a Response. Fastify gives us node IncomingMessage; we
   //    translate via the route URL prefix.
+  // 1a) In bootstrap (no-auth) dev mode, intercept /api/auth/get-session so
+  //     the frontend `useAuth.refresh()` sees a synthetic session instead of
+  //     the literal `null` Better Auth returns when nobody is signed in.
+  //     This must be registered BEFORE the catch-all auth handler below.
+  if (!env.REQUIRE_AUTH) {
+    fastify.get('/api/auth/get-session', async (request) => {
+      // Read current active org from the persistent bootstrap session row.
+      let activeOrgId: string = BOOTSTRAP_ORG_ID;
+      try {
+        const { rows: [r] } = await fastify.pg.pool.query<{ active_organization_id: string | null }>(
+          `SELECT active_organization_id FROM auth_session WHERE id = 'bootstrap'`,
+        );
+        if (r?.active_organization_id) activeOrgId = r.active_organization_id;
+      } catch { /* ignore */ }
+      void request;
+      return {
+        user: {
+          id:    BOOTSTRAP_USER.id,
+          email: BOOTSTRAP_USER.email,
+          name:  BOOTSTRAP_USER.name,
+        },
+        session: {
+          id:                      'bootstrap',
+          expiresAt:               new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          active_organization_id:  activeOrgId,
+        },
+      };
+    });
+  }
+
   fastify.all('/api/auth/*', async (request, reply) => {
     const url = new URL(request.url, env.APP_URL);
     const headers = new Headers();
@@ -161,11 +200,21 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
 
     // Bootstrap fallback for dev mode — only when no real session.
     if (!request.user && !env.REQUIRE_AUTH) {
+      // Read the persistent bootstrap session so the active org survives
+      // API restarts. Falls back to BOOTSTRAP_ORG_ID if the row was wiped.
+      let activeOrgId: string = BOOTSTRAP_ORG_ID;
+      try {
+        const { rows: [r] } = await fastify.pg.pool.query<{ active_organization_id: string | null }>(
+          `SELECT active_organization_id FROM auth_session WHERE id = 'bootstrap'`,
+        );
+        if (r?.active_organization_id) activeOrgId = r.active_organization_id;
+      } catch { /* ignore — fall back to default */ }
+
       request.user = BOOTSTRAP_USER;
       request.session = {
         id: 'bootstrap',
         userId: BOOTSTRAP_USER.id,
-        activeOrganizationId: BOOTSTRAP_ORG_ID,
+        activeOrganizationId: activeOrgId,
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
       };
     }

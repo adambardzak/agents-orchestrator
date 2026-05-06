@@ -1,0 +1,156 @@
+name: Deploy to Netcup
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs of the same workflow on the same ref
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false  # Don't cancel deploys mid-flight; queue instead
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # ─── Build & push API + Web images to GHCR ──────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    strategy:
+      fail-fast: true
+      matrix:
+        service: [api, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          SHA_SHORT="${GITHUB_SHA::7}"
+          echo "tag=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          # Lower-case owner for GHCR image path (GHCR requires lowercase)
+          OWNER_LC=$(echo "${IMAGE_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner_lc }}/agent-orchestrator-${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner_lc }}/agent-orchestrator-${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to:   type=gha,scope=${{ matrix.service }},mode=max
+          build-args: |
+            NUXT_PUBLIC_API_BASE=${{ vars.PUBLIC_API_BASE }}
+            NUXT_PUBLIC_WS_BASE=${{ vars.PUBLIC_WS_BASE }}
+
+  # ─── Deploy: SSH to VPS, sync compose, run migrations, recreate stack ──
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          known_hosts: unnecessary
+          config: |
+            Host vps
+              HostName ${{ secrets.DEPLOY_HOST }}
+              User deploy
+              StrictHostKeyChecking accept-new
+              ServerAliveInterval 30
+
+      - name: Sync compose + Caddyfile to server
+        run: |
+          rsync -avz --delete \
+            deploy/docker-compose.netcup.yml \
+            deploy/Caddyfile \
+            vps:/opt/agent-orchestrator/compose/
+
+      - name: Sync migrations (for one-shot migrate container)
+        run: |
+          rsync -avz --delete \
+            apps/api/src/db/migrations/ \
+            vps:/opt/agent-orchestrator/migrations/
+
+      - name: Deploy on VPS
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          ssh vps bash -s <<EOF
+          set -euo pipefail
+          cd /opt/agent-orchestrator/compose
+
+          export IMAGE_TAG="${IMAGE_TAG}"
+
+          echo "▶ Pulling new images"
+          docker compose -f docker-compose.netcup.yml --env-file ../.env pull api web
+
+          echo "▶ Ensuring infra (postgres, redis) is up"
+          docker compose -f docker-compose.netcup.yml --env-file ../.env up -d postgres redis
+
+          echo "▶ Waiting for postgres to be healthy"
+          for i in \$(seq 1 30); do
+            STATUS=\$(docker inspect --format '{{.State.Health.Status}}' orchestrator-postgres 2>/dev/null || echo "starting")
+            if [ "\$STATUS" = "healthy" ]; then break; fi
+            sleep 2
+          done
+
+          echo "▶ Running migrations (one-shot container)"
+          docker run --rm --network compose_orchestrator-net \
+            -v /opt/agent-orchestrator/migrations:/migrations:ro \
+            -e PGPASSWORD="\$(grep ^POSTGRES_PASSWORD ../.env | cut -d= -f2-)" \
+            postgres:16-alpine \
+            sh -c 'for f in /migrations/*.sql; do
+              echo "  ▶ \$f";
+              psql -h orchestrator-postgres -U orchestrator -d orchestrator -v ON_ERROR_STOP=1 -f "\$f" || exit 1;
+            done'
+
+          echo "▶ Recreating api + web with new images"
+          docker compose -f docker-compose.netcup.yml --env-file ../.env up -d api web caddy code-server
+
+          echo "▶ Pruning old images"
+          docker image prune -f --filter "until=72h"
+
+          echo "✓ Deploy complete (tag: ${IMAGE_TAG})"
+          docker compose -f docker-compose.netcup.yml --env-file ../.env ps
+          EOF
+
+      - name: Smoke test
+        run: |
+          set -e
+          for i in $(seq 1 20); do
+            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' -u admin:\$(grep ^BASIC_AUTH_PLAIN /opt/agent-orchestrator/.env | cut -d= -f2-) http://127.0.0.1:8091/api/healthz" 2>/dev/null || echo "000")
+            echo "Attempt $i: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "✓ Smoke test passed"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "✗ Smoke test failed after 20 attempts"
+          ssh vps "docker logs --tail 60 orchestrator-api"
+          exit 1

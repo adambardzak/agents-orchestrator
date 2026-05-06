@@ -1,0 +1,48 @@
+# Caddy reverse proxy for agent-orchestrator (Netcup VPS)
+# Public on :8091 with HTTP basic auth wrapping the Nuxt UI + API.
+# code-server keeps its own login on :8092 (no Caddy in front).
+
+{
+	# Global options
+	auto_https off
+	admin off
+}
+
+:8091 {
+	# All paths require basic auth.
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	# API prefix → fastify on :3001 inside docker network
+	handle_path /api/* {
+		reverse_proxy api:3001 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			header_up X-Forwarded-For {remote}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# WebSocket events
+	handle_path /ws/* {
+		reverse_proxy api:3001
+	}
+
+	# Everything else → Nuxt
+	handle {
+		reverse_proxy web:3000 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			header_up X-Forwarded-For {remote}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+}

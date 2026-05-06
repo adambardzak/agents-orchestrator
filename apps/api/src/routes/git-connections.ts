@@ -30,7 +30,6 @@ const STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 
 interface OAuthState {
   provider: GitProviderId;
-  organizationId: string;
   userId: string;
   redirect: string;
   nonce: string;
@@ -77,12 +76,9 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
   }));
 
   // ── GET /api/git/connections ──────────────────────────────────────────────
-  fastify.get('/api/git/connections', async (request, reply) => {
+  fastify.get('/api/git/connections', async (request) => {
     const user = await request.requireUser();
-    const orgId = request.session?.activeOrganizationId;
-    if (!orgId) return reply.status(403).send({ error: 'No active organization' });
-    void user;
-    return { connections: await connections.listForOrg(orgId) };
+    return { connections: await connections.listForUser(user.id) };
   });
 
   // ── PATCH /api/git/connections/:id ────────────────────────────────────────
@@ -92,12 +88,12 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
   fastify.patch<{ Params: { id: string } }>(
     '/api/git/connections/:id',
     async (request, reply) => {
-      await request.requireUser();
+      const user = await request.requireUser();
       const parsed = patchSchema.safeParse(request.body);
       if (!parsed.success) return reply.status(400).send({ error: parsed.error.flatten() });
       const conn = await connections.getById(request.params.id);
       if (!conn) return reply.status(404).send({ error: 'Not found' });
-      if (conn.organizationId !== request.session?.activeOrganizationId) {
+      if (conn.userId !== user.id) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
       await connections.setDefaultVisibility(request.params.id, parsed.data.defaultVisibility);
@@ -109,10 +105,10 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
   fastify.delete<{ Params: { id: string } }>(
     '/api/git/connections/:id',
     async (request, reply) => {
-      await request.requireUser();
+      const user = await request.requireUser();
       const conn = await connections.getById(request.params.id);
       if (!conn) return reply.status(404).send({ error: 'Not found' });
-      if (conn.organizationId !== request.session?.activeOrganizationId) {
+      if (conn.userId !== user.id) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
       await connections.delete(request.params.id);
@@ -124,10 +120,10 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
   fastify.get<{ Params: { id: string }; Querystring: { page?: string } }>(
     '/api/git/connections/:id/repos',
     async (request, reply) => {
-      await request.requireUser();
+      const user = await request.requireUser();
       const conn = await connections.getById(request.params.id);
       if (!conn) return reply.status(404).send({ error: 'Not found' });
-      if (conn.organizationId !== request.session?.activeOrganizationId) {
+      if (conn.userId !== user.id) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
       const provider = getGitProvider(conn.provider);
@@ -150,8 +146,6 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
     '/api/git/connect/:provider',
     async (request, reply) => {
       const user = await request.requireUser();
-      const orgId = request.session?.activeOrganizationId;
-      if (!orgId) return reply.status(403).send({ error: 'No active organization' });
 
       const provider = getGitProvider(request.params.provider as GitProviderId);
       if (!provider) {
@@ -160,7 +154,6 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
 
       const state: OAuthState = {
         provider:       provider.id,
-        organizationId: orgId,
         userId:         user.id,
         redirect:       request.query.redirect ?? '/settings',
         nonce:          randomBytes(16).toString('base64url'),
@@ -206,7 +199,6 @@ export async function gitConnectionRoutes(fastify: FastifyInstance): Promise<voi
         });
         const account = await provider.whoami(tokens.accessToken);
         await connections.upsertFromOAuth({
-          organizationId: stateCookie.organizationId,
           userId:         stateCookie.userId,
           provider:       provider.id,
           account,

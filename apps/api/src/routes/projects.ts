@@ -232,8 +232,8 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       const connections = new GitConnectionService(fastify.pg.pool);
       const conn = await connections.getById(body.git.gitConnectionId);
       if (!conn) return reply.status(400).send({ error: 'Unknown git connection' });
-      if (orgId && conn.organizationId !== orgId) {
-        return reply.status(403).send({ error: 'Connection belongs to a different org' });
+      if (conn.userId !== user.id) {
+        return reply.status(403).send({ error: 'Connection belongs to a different user' });
       }
       const provider = getGitProvider(conn.provider);
       if (!provider) {

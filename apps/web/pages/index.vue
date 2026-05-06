@@ -494,14 +494,14 @@
         </div>
 
         <div class="flex gap-2">
-          <UTextarea
+          <ChatInputWithMentions
             v-model="inputPrompt"
-            placeholder="Describe what you want to build..."
+            :project-id="selectedProjectId"
             :rows="3"
             class="flex-1"
+            placeholder="Describe what you want to build... (type @ to reference files)"
             :disabled="sessionStore.isCreatingSession"
-            @keydown.meta.enter="sendMessage"
-            @keydown.ctrl.enter="sendMessage"
+            @submit="sendMessage"
           />
           <div class="flex flex-col gap-2">
             <UButton
@@ -544,6 +544,7 @@
 import { useSessionStore } from '~/stores/session';
 import { useProjectStore } from '~/stores/project';
 import { useOrchestratorApi } from '~/composables/useOrchestratorApi';
+import { extractMentions } from '~/utils/mentions';
 import type { OpencodeEvent } from '@agent-orchestrator/shared';
 
 const sessionStore = useSessionStore();
@@ -1001,6 +1002,11 @@ async function sendMessage() {
       contextType: 'personal',
       userPrompt: prompt,
       budgetCapUsd: 5,
+      // Extract `@file` mentions so the worker can load file contents
+      // into the agent system prompt. The mentions stay in the prompt
+      // text too — the agent sees both the user's phrasing and the
+      // canonical contents under `## Referenced Files`.
+      referencedFiles: extractMentions(prompt),
     });
 
     sessionStore.setSession(result.session, result.tasks);

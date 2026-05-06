@@ -55,6 +55,9 @@ export function mapTask(row: Record<string, unknown>): AgentTask {
     dependsOn: (row['depends_on'] as string[]) ?? [],
     ticketId: (row['ticket_id'] as string | null) ?? null,
     targetAgentType: (row['target_agent_type'] as AgentType | null) ?? null,
+    referencedFiles: Array.isArray(row['referenced_files'])
+      ? (row['referenced_files'] as string[])
+      : [],
     startedAt: row['started_at'] ? new Date(row['started_at'] as string) : undefined,
     completedAt: row['completed_at'] ? new Date(row['completed_at'] as string) : undefined,
     createdAt: new Date(row['created_at'] as string),

@@ -84,7 +84,54 @@ const createSessionSchema = z.object({
   contextType: z.enum(['personal', 'cez']),
   userPrompt: z.string().min(1).max(10_000),
   budgetCapUsd: z.number().positive().default(5),
+  /**
+   * Optional list of workspace-relative file paths the user `@`-mentioned
+   * in the chat input. Each path is normalized + traversal-checked at
+   * ingest time; the worker loads them from the project root and injects
+   * contents under `## Referenced Files` in the agent's system prompt.
+   */
+  referencedFiles: z
+    .array(z.string().min(1).max(512))
+    .max(env.REFERENCED_FILES_MAX_COUNT)
+    .default([]),
 });
+
+/**
+ * Normalize and validate a list of user-supplied workspace-relative file
+ * paths. Strips leading `./`, rejects absolute paths, NUL bytes, and any
+ * `..` segment that would escape the workspace root. Returns the cleaned
+ * list (deduplicated, order preserved) or throws when an entry is invalid.
+ *
+ * The actual existence check is deferred to the worker (the file may be
+ * created mid-task by another agent); we only guard against path traversal
+ * at the API boundary so we don't persist obviously malicious entries.
+ */
+function sanitizeReferencedFiles(input: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    if (raw.includes('\0')) {
+      throw new Error(`Invalid referenced file path: contains NUL byte`);
+    }
+    let p = raw.trim();
+    if (!p) continue;
+    // Strip leading ./ — common in chat mentions
+    while (p.startsWith('./')) p = p.slice(2);
+    if (nodePath.isAbsolute(p) || p.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(p)) {
+      throw new Error(`Invalid referenced file path (absolute not allowed): ${raw}`);
+    }
+    // posix-normalize then verify it doesn't escape root
+    const norm = nodePath.posix.normalize(p);
+    if (norm.startsWith('..') || norm.split('/').includes('..')) {
+      throw new Error(`Invalid referenced file path (traversal): ${raw}`);
+    }
+    if (!seen.has(norm)) {
+      seen.add(norm);
+      out.push(norm);
+    }
+  }
+  return out;
+}
 
 export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
   // ── POST /api/sessions — start a new orchestration session ──────────────────
@@ -96,6 +143,15 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(401).send({
         error: 'GitHub token required (x-github-token header or GITHUB_TOKEN env)',
       });
+    }
+
+    // Validate `@file` mentions early — fail loud on traversal attempts so
+    // the FE surfaces a precise error instead of silently dropping refs.
+    let referencedFiles: string[];
+    try {
+      referencedFiles = sanitizeReferencedFiles(body.referencedFiles);
+    } catch (err) {
+      return reply.status(400).send({ error: (err as Error).message });
     }
 
     const sessionId = uuid();
@@ -134,8 +190,8 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
 
     await fastify.pg.query(
       `INSERT INTO agent_tasks
-         (id, session_id, project_id, context_type, agent_type, agent_id, prompt, status, complexity, model, max_steps)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)`,
+         (id, session_id, project_id, context_type, agent_type, agent_id, prompt, status, complexity, model, max_steps, referenced_files)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11)`,
       [
         orchestratorTaskId,
         sessionId,
@@ -147,6 +203,7 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
         ORCHESTRATOR_AGENT.defaultComplexity,
         orchestratorModel,
         ORCHESTRATOR_AGENT.maxSteps,
+        JSON.stringify(referencedFiles),
       ],
     );
 
@@ -168,6 +225,7 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
       outputTokens: 0,
       costUsd: 0,
       dependsOn: [],
+      referencedFiles,
       createdAt: new Date(),
     };
 
@@ -286,7 +344,18 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
 
       const body = z.object({
         answers: z.record(z.string(), z.string()).or(z.array(z.string())),
+        referencedFiles: z
+          .array(z.string().min(1).max(512))
+          .max(env.REFERENCED_FILES_MAX_COUNT)
+          .default([]),
       }).parse(request.body);
+
+      let referencedFiles: string[];
+      try {
+        referencedFiles = sanitizeReferencedFiles(body.referencedFiles);
+      } catch (err) {
+        return reply.status(400).send({ error: (err as Error).message });
+      }
 
       // Convert answers array/object to readable text
       const answersText = Array.isArray(body.answers)
@@ -346,8 +415,8 @@ Please now produce the execution plan (no further clarification needed).`;
 
       await fastify.pg.query(
         `INSERT INTO agent_tasks
-           (id, session_id, project_id, context_type, agent_type, agent_id, prompt, status, complexity, model, max_steps)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)`,
+           (id, session_id, project_id, context_type, agent_type, agent_id, prompt, status, complexity, model, max_steps, referenced_files)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11)`,
         [
           newTaskId,
           sessionId,
@@ -359,6 +428,7 @@ Please now produce the execution plan (no further clarification needed).`;
           ORCHESTRATOR_AGENT.defaultComplexity,
           orchestratorModel,
           ORCHESTRATOR_AGENT.maxSteps,
+          JSON.stringify(referencedFiles),
         ],
       );
 
@@ -380,6 +450,7 @@ Please now produce the execution plan (no further clarification needed).`;
         outputTokens: 0,
         costUsd: 0,
         dependsOn: [],
+        referencedFiles,
         createdAt: new Date(),
       };
 

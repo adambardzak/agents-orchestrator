@@ -478,6 +478,110 @@ export class AgentWorker {
       this.logger.warn({ err, taskId: task.id }, 'Failed to load branch chat scope (continuing)');
     }
 
+    // ── User-referenced files (`@file` mentions) ────────────────────────────
+    // The chat input lets the user mention files via autocomplete; those
+    // paths arrive as `task.referencedFiles` (already traversal-validated at
+    // the API ingest layer). Load each from the project's CANONICAL workspace
+    // root (not the per-session subdir — we want the clean source-of-truth
+    // version, not a partially-edited copy from this same session) and inject
+    // contents under a `## Referenced Files` block.
+    //
+    // Caps:
+    //   - per file: REFERENCED_FILES_PER_FILE_MAX_CHARS (truncate head, mark)
+    //   - total:    REFERENCED_FILES_TOTAL_MAX_CHARS    (drop overflow files)
+    if (Array.isArray(task.referencedFiles) && task.referencedFiles.length > 0) {
+      try {
+        const projectRoot = await this.getProjectWorkspaceDir(task.projectId);
+        const perFileCap   = env.REFERENCED_FILES_PER_FILE_MAX_CHARS;
+        const totalCap     = env.REFERENCED_FILES_TOTAL_MAX_CHARS;
+        const sections: string[] = [];
+        const loaded: { path: string; chars: number; truncated: boolean }[] = [];
+        const skipped: { path: string; reason: string }[] = [];
+        let runningTotal = 0;
+
+        for (const relPath of task.referencedFiles) {
+          // Defense in depth: re-validate traversal here too (worker may
+          // execute long after ingest, and DB rows can in theory be tampered
+          // with). Use posix-style normalization since stored paths are posix.
+          const norm = nodePath.posix.normalize(relPath);
+          if (norm.startsWith('..') || nodePath.isAbsolute(norm)) {
+            skipped.push({ path: relPath, reason: 'traversal' });
+            continue;
+          }
+          const absPath = nodePath.join(projectRoot, norm);
+          // Final safety: realpath check is too slow; verify the resolved
+          // path stays under projectRoot lexically.
+          const resolved = nodePath.resolve(absPath);
+          const resolvedRoot = nodePath.resolve(projectRoot);
+          if (!resolved.startsWith(resolvedRoot + nodePath.sep) && resolved !== resolvedRoot) {
+            skipped.push({ path: relPath, reason: 'escape' });
+            continue;
+          }
+          let raw: string;
+          try {
+            raw = await fs.readFile(absPath, 'utf-8');
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            skipped.push({ path: relPath, reason: code === 'ENOENT' ? 'not-found' : `read-error:${code ?? 'unknown'}` });
+            continue;
+          }
+          let body = raw;
+          let truncated = false;
+          if (perFileCap > 0 && raw.length > perFileCap) {
+            body = raw.slice(0, perFileCap)
+              + `\n\n<!-- truncated: ${raw.length - perFileCap} chars omitted (REFERENCED_FILES_PER_FILE_MAX_CHARS=${perFileCap}) -->`;
+            truncated = true;
+          }
+          // Pick a fence size that won't collide with content (rare but
+          // possible when referencing markdown). 4 backticks beats almost
+          // any embedded code fence.
+          const lang = inferLangFromPath(norm);
+          const section = `### \`${norm}\`\n\n\`\`\`\`${lang}\n${body}\n\`\`\`\`\n`;
+          if (totalCap > 0 && runningTotal + section.length > totalCap) {
+            skipped.push({ path: relPath, reason: 'total-cap-exceeded' });
+            continue;
+          }
+          sections.push(section);
+          runningTotal += section.length;
+          loaded.push({ path: norm, chars: body.length, truncated });
+        }
+
+        if (sections.length > 0) {
+          const header = [
+            '',
+            '## Referenced Files',
+            '',
+            'The user explicitly referenced the following files in their request.',
+            'Treat them as primary context for the task. Paths are relative to the',
+            'project workspace root.',
+            '',
+          ].join('\n');
+          const block = header + sections.join('\n');
+          resolvedExtraContext = (resolvedExtraContext ?? '') + '\n' + block;
+          budget.add('referenced-files', block.length, {
+            requested: task.referencedFiles.length,
+            loaded: loaded.length,
+            skipped: skipped.length,
+            truncated: loaded.filter((f) => f.truncated).length,
+          });
+          this.logger.info(
+            { taskId: task.id, loaded, skipped },
+            'Injected user-referenced files into agent context',
+          );
+        } else if (skipped.length > 0) {
+          this.logger.warn(
+            { taskId: task.id, skipped },
+            'All `@file` references were skipped (none could be loaded)',
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          { err, taskId: task.id },
+          'Referenced-files injection failed (continuing without)',
+        );
+      }
+    }
+
     // ── status: pending → running ────────────────────────────────────────────
     await this.onTaskStatusChange(task.id, 'running');
     this.eventBus.publish(
@@ -2106,6 +2210,46 @@ ${ticket.description}`;
 // agent process. Only vars that are set in the API server's env are injected
 // — missing ones are silently skipped.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Map a file extension to a markdown code-fence language hint. Used when
+ * embedding `@file` referenced contents in the system prompt — gives the
+ * agent a syntactic cue instead of a bare ``` block. Unknown extensions
+ * fall back to an empty hint (still a valid fenced block).
+ */
+function inferLangFromPath(p: string): string {
+  const ext = p.slice(p.lastIndexOf('.') + 1).toLowerCase();
+  switch (ext) {
+    case 'ts': case 'tsx': return 'ts';
+    case 'js': case 'jsx': case 'mjs': case 'cjs': return 'js';
+    case 'vue': return 'vue';
+    case 'py': return 'python';
+    case 'rb': return 'ruby';
+    case 'go': return 'go';
+    case 'rs': return 'rust';
+    case 'java': return 'java';
+    case 'kt': return 'kotlin';
+    case 'swift': return 'swift';
+    case 'php': return 'php';
+    case 'cs': return 'csharp';
+    case 'cpp': case 'cc': case 'cxx': case 'hpp': case 'hh': return 'cpp';
+    case 'c': case 'h': return 'c';
+    case 'sh': case 'bash': case 'zsh': return 'bash';
+    case 'sql': return 'sql';
+    case 'json': return 'json';
+    case 'yaml': case 'yml': return 'yaml';
+    case 'toml': return 'toml';
+    case 'xml': return 'xml';
+    case 'html': case 'htm': return 'html';
+    case 'css': return 'css';
+    case 'scss': case 'sass': return 'scss';
+    case 'md': case 'markdown': return 'md';
+    case 'dockerfile': return 'dockerfile';
+    default:
+      if (p.toLowerCase().endsWith('dockerfile')) return 'dockerfile';
+      return '';
+  }
+}
 
 function buildContextEnv(contextType: 'personal' | 'cez'): Record<string, string> {
   const result: Record<string, string> = {};

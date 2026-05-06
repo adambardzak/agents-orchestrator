@@ -153,6 +153,13 @@ export interface AgentTask {
   ticketId?: string | null;
   /** For Planner tasks: the worker agent type whose tickets will be generated */
   targetAgentType?: AgentType | null;
+  /**
+   * Files explicitly referenced by the user via `@file` mentions in the chat
+   * input. Paths are relative to the project's workspace root. The worker
+   * loads each file (with size cap) and injects content under
+   * `## Referenced Files` in the agent's system prompt.
+   */
+  referencedFiles?: string[];
   startedAt?: Date;
   completedAt?: Date;
   createdAt: Date;
@@ -342,6 +349,8 @@ export interface CreateSessionRequest {
   contextType: ContextType;
   userPrompt: string;
   budgetCapUsd?: number;
+  /** Workspace-relative paths the user `@`-mentioned in the chat input. */
+  referencedFiles?: string[];
 }
 
 export interface CreateSessionResponse {

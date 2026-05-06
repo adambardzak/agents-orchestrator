@@ -107,6 +107,29 @@ const envSchema = z.object({
    */
   FRONTEND_RULES_MAX_CHARS: z.coerce.number().int().nonnegative().default(4000),
 
+  /**
+   * Per-file size cap (chars) when loading user-referenced files via `@file`
+   * mentions into the agent's system prompt. Files larger than this are
+   * truncated head-first with a `<!-- truncated: N chars omitted -->` marker.
+   * Default 50_000 chars ≈ 12.5K tokens — enough for typical source files
+   * without blowing the context budget on a single reference.
+   */
+  REFERENCED_FILES_PER_FILE_MAX_CHARS: z.coerce.number().int().nonnegative().default(50_000),
+
+  /**
+   * Total cap (chars) on the combined `## Referenced Files` block. Once the
+   * running total exceeds this, additional files are dropped with a warning
+   * logged for operator visibility. Default 200_000 chars ≈ 50K tokens.
+   */
+  REFERENCED_FILES_TOTAL_MAX_CHARS: z.coerce.number().int().nonnegative().default(200_000),
+
+  /**
+   * Hard cap on the number of `@file` references accepted per task. Prevents
+   * pathological prompts from enumerating the entire repo. Validated at the
+   * API ingest layer; requests exceeding this are rejected with 400.
+   */
+  REFERENCED_FILES_MAX_COUNT: z.coerce.number().int().positive().default(20),
+
   /** When true (default), API requires an authenticated session for non-public routes.
    *  Set to "false" only for local single-user dev where you've intentionally
    *  disabled auth for fast iteration. */

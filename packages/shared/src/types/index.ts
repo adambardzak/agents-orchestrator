@@ -166,6 +166,21 @@ export interface Session {
   userPrompt: string;
   totalCostUsd: number;
   budgetCapUsd: number;
+  /** 'main' = project-level chat. 'branch' = focused fork off another session. */
+  kind: 'main' | 'branch';
+  /** Set when `kind === 'branch'`. References the parent session. */
+  parentSessionId: string | null;
+  /** Optional human-readable label shown in the sidebar (branch chats only). */
+  name: string | null;
+  /**
+   * File globs the agent should focus on (soft scope — system-prompt level).
+   * Empty array = no restriction. Only meaningful for branch chats.
+   */
+  scopeGlobs: string[];
+  /** Auto-created git branch for branch chats. Null for main chats. */
+  branchName: string | null;
+  /** Set when the user accepted the branch's merge into its parent's branch. */
+  mergedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

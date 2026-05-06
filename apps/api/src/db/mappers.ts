@@ -20,6 +20,12 @@ export function mapSession(row: Record<string, unknown>): Session {
     userPrompt: row['user_prompt'] as string,
     totalCostUsd: Number(row['total_cost_usd'] ?? 0),
     budgetCapUsd: Number(row['budget_cap_usd'] ?? 5),
+    kind: ((row['kind'] as string) ?? 'main') as Session['kind'],
+    parentSessionId: (row['parent_session_id'] as string | null) ?? null,
+    name: (row['name'] as string | null) ?? null,
+    scopeGlobs: Array.isArray(row['scope_globs']) ? (row['scope_globs'] as string[]) : [],
+    branchName: (row['branch_name'] as string | null) ?? null,
+    mergedAt: row['merged_at'] ? new Date(row['merged_at'] as string) : null,
     createdAt: new Date(row['created_at'] as string),
     updatedAt: new Date(row['updated_at'] as string),
   };

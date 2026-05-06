@@ -17,53 +17,132 @@
         <div v-if="filteredHistory.length === 0" class="text-center text-text-muted text-sm py-8">
           {{ projectStore.activeProject ? 'No sessions for this project' : 'No previous sessions' }}
         </div>
-        <div
-          v-for="session in filteredHistory"
-          :key="session.id"
-          class="w-full text-left p-3 rounded-lg hover:bg-surface mb-1 group transition-opacity relative"
-          :class="loadingSessionId === session.id ? 'opacity-60 cursor-wait' : 'cursor-pointer'"
-          @click="loadingSessionId === null && loadSession(session.id)"
-        >
-          <div class="flex items-center gap-1.5 pr-5">
-            <UIcon
-              v-if="loadingSessionId === session.id"
-              name="i-ph-circle-notch-light"
-              class="w-3 h-3 animate-spin text-text-muted flex-shrink-0"
-            />
-            <span class="text-sm font-medium truncate">{{ session.userPrompt }}</span>
-          </div>
-          <div class="text-xs text-text-muted mt-1 flex justify-between">
-            <span>{{ formatDate(session.createdAt) }}</span>
-            <span
-              v-if="Number(session.totalCostUsd) > 0"
-              class="tabular-nums"
-            >${{ Number(session.totalCostUsd).toFixed(3) }}</span>
-            <span
-              v-else
-              class="capitalize"
-              :class="session.status === 'completed' ? 'text-completed' : session.status === 'failed' ? 'text-failed' : 'text-pending'"
-            >{{ session.status }}</span>
-          </div>
-          <!-- Delete button — visible on hover -->
-          <button
-            class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-failed/20 text-text-muted hover:text-failed"
-            :class="deletingSessionId === session.id ? 'opacity-100' : ''"
-            :disabled="deletingSessionId === session.id"
-            title="Delete session"
-            @click="deleteSession($event, session.id)"
+
+        <!--
+          Branch chats grouping: each main chat renders its own row, then any
+          branch chats forked off it render indented below. Keeps the mental
+          model "branch chats live under their parent" without nested boxes.
+        -->
+        <template v-for="main in mainChatsInHistory" :key="main.id">
+          <div
+            class="w-full text-left p-3 rounded-lg hover:bg-surface mb-1 group transition-opacity relative"
+            :class="loadingSessionId === main.id ? 'opacity-60 cursor-wait' : 'cursor-pointer'"
+            @click="loadingSessionId === null && loadSession(main.id)"
           >
-            <UIcon
-              :name="deletingSessionId === session.id ? 'i-ph-circle-notch-light' : 'i-ph-trash-light'"
-              class="w-3.5 h-3.5"
-              :class="deletingSessionId === session.id ? 'animate-spin' : ''"
-            />
-          </button>
-        </div>
+            <div class="flex items-center gap-1.5 pr-5">
+              <UIcon
+                v-if="loadingSessionId === main.id"
+                name="i-ph-circle-notch-light"
+                class="w-3 h-3 animate-spin text-text-muted flex-shrink-0"
+              />
+              <span class="text-sm font-medium truncate">{{ main.userPrompt }}</span>
+            </div>
+            <div class="text-xs text-text-muted mt-1 flex justify-between">
+              <span>{{ formatDate(main.createdAt) }}</span>
+              <span
+                v-if="Number(main.totalCostUsd) > 0"
+                class="tabular-nums"
+              >${{ Number(main.totalCostUsd).toFixed(3) }}</span>
+              <span
+                v-else
+                class="capitalize"
+                :class="main.status === 'completed' ? 'text-completed' : main.status === 'failed' ? 'text-failed' : 'text-pending'"
+              >{{ main.status }}</span>
+            </div>
+            <!-- Action buttons — visible on hover. Branch chat fork (left) + delete (right). -->
+            <div class="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                class="p-0.5 rounded hover:bg-accent/20 text-text-muted hover:text-accent"
+                title="Fork as branch chat"
+                @click.stop="openForkModal(main)"
+              >
+                <UIcon name="i-ph-git-branch-light" class="w-3.5 h-3.5" />
+              </button>
+              <button
+                class="p-0.5 rounded hover:bg-failed/20 text-text-muted hover:text-failed"
+                :class="deletingSessionId === main.id ? 'opacity-100' : ''"
+                :disabled="deletingSessionId === main.id"
+                title="Delete session"
+                @click.stop="deleteSession($event, main.id)"
+              >
+                <UIcon
+                  :name="deletingSessionId === main.id ? 'i-ph-circle-notch-light' : 'i-ph-trash-light'"
+                  class="w-3.5 h-3.5"
+                  :class="deletingSessionId === main.id ? 'animate-spin' : ''"
+                />
+              </button>
+            </div>
+          </div>
+
+          <!-- Indented branch chats under this main -->
+          <div
+            v-for="branch in branchChatsByParent[main.id] ?? []"
+            :key="branch.id"
+            class="ml-4 pl-3 border-l border-border w-[calc(100%-1rem)] text-left p-2 rounded-r-lg hover:bg-surface mb-1 group relative"
+            :class="loadingSessionId === branch.id ? 'opacity-60 cursor-wait' : 'cursor-pointer'"
+            @click="loadingSessionId === null && loadSession(branch.id)"
+          >
+            <div class="flex items-center gap-1.5 pr-5">
+              <UIcon name="i-ph-git-branch-light" class="w-3 h-3 text-accent flex-shrink-0" />
+              <span class="text-xs font-medium truncate">{{ branch.name || branch.userPrompt }}</span>
+              <UIcon v-if="branch.mergedAt" name="i-ph-git-merge-light" class="w-3 h-3 text-completed flex-shrink-0" :title="`Merged ${formatDate(branch.mergedAt)}`" />
+            </div>
+            <div v-if="(branch.scopeGlobs?.length ?? 0) > 0" class="text-[10px] text-text-muted mt-0.5 truncate">
+              {{ branch.scopeGlobs!.length }} scope pattern{{ branch.scopeGlobs!.length === 1 ? '' : 's' }}
+            </div>
+            <button
+              class="absolute top-1.5 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-failed/20 text-text-muted hover:text-failed"
+              :disabled="deletingSessionId === branch.id"
+              title="Delete branch chat"
+              @click.stop="deleteSession($event, branch.id)"
+            >
+              <UIcon
+                :name="deletingSessionId === branch.id ? 'i-ph-circle-notch-light' : 'i-ph-trash-light'"
+                class="w-3 h-3"
+                :class="deletingSessionId === branch.id ? 'animate-spin' : ''"
+              />
+            </button>
+          </div>
+        </template>
       </div>
     </aside>
 
     <!-- Chat area -->
     <div class="flex-1 flex flex-col">
+      <!--
+        Branch chat header band — shown only when the active session is a
+        branch chat. Surfaces the branch name, scope summary, and the merge
+        action so the user doesn't have to dig into menus.
+      -->
+      <div
+        v-if="currentBranchInfo"
+        class="border-b border-border bg-accent/5 px-4 py-2 flex items-center gap-3 text-sm"
+      >
+        <UIcon name="i-ph-git-branch-light" class="w-4 h-4 text-accent flex-shrink-0" />
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <span class="font-medium truncate">{{ currentBranchInfo.name || 'Branch chat' }}</span>
+            <code class="text-xs text-text-muted truncate">{{ currentBranchInfo.branchName }}</code>
+            <UBadge v-if="currentBranchInfo.mergedAt" color="completed" variant="subtle" size="xs">
+              merged
+            </UBadge>
+          </div>
+          <div v-if="(currentBranchInfo.scopeGlobs?.length ?? 0) > 0" class="text-xs text-text-muted truncate">
+            scope: {{ currentBranchInfo.scopeGlobs!.join(', ') }}
+          </div>
+        </div>
+        <UButton
+          v-if="!currentBranchInfo.mergedAt"
+          size="xs"
+          variant="soft"
+          icon="i-ph-git-merge-light"
+          :loading="mergeLoading"
+          @click="openMergeModal"
+        >
+          Merge
+        </UButton>
+      </div>
+
       <!-- Messages -->
       <div ref="messagesContainer" class="flex-1 overflow-y-auto p-6 space-y-4">
         <!-- Welcome state -->
@@ -184,6 +263,79 @@
                 :disabled="!injectMessage.trim()"
                 @click="doInject"
               >Inject</UButton>
+            </div>
+          </template>
+        </UCard>
+      </UModal>
+
+      <!-- Fork-as-branch-chat modal -->
+      <UModal v-model="showForkModal">
+        <UCard>
+          <template #header>
+            <p class="font-semibold">Fork branch chat from "{{ forkParentLabel }}"</p>
+          </template>
+          <form class="space-y-4" @submit.prevent="submitForkChat">
+            <UFormGroup label="Name" hint="Optional — appears in the sidebar and seeds the git branch name.">
+              <UInput v-model="forkForm.name" placeholder="Refactor LoginButton" />
+            </UFormGroup>
+            <UFormGroup
+              label="File scope (optional)"
+              hint="One glob per line. The agent will focus on these files but may still read others when investigating."
+            >
+              <UTextarea
+                v-model="forkForm.scopeRaw"
+                :rows="5"
+                font-mono
+                placeholder="apps/web/components/Login*.vue&#10;apps/web/composables/useAuth.ts"
+              />
+            </UFormGroup>
+            <p v-if="forkError" class="text-sm text-failed">{{ forkError }}</p>
+            <p class="text-xs text-text-muted">
+              A new git branch will be auto-created off the project's current branch. Once you're done you can merge it back from the chat header.
+            </p>
+          </form>
+          <template #footer>
+            <div class="flex justify-end gap-3">
+              <UButton variant="ghost" @click="showForkModal = false">Cancel</UButton>
+              <UButton :loading="forkLoading" icon="i-ph-git-branch-light" @click="submitForkChat">
+                Create branch chat
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </UModal>
+
+      <!-- Merge branch chat modal -->
+      <UModal v-model="showMergeModal" :ui="{ width: 'sm:max-w-3xl' }">
+        <UCard>
+          <template #header>
+            <p class="font-semibold">Merge branch chat into {{ mergeTargetBranch || 'main' }}</p>
+          </template>
+          <div class="space-y-3">
+            <div v-if="mergeDiffLoading" class="flex items-center gap-2 text-sm text-text-muted">
+              <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
+              Loading diff...
+            </div>
+            <div v-else-if="mergeDiff === ''" class="text-sm text-text-muted italic">
+              No changes — branch is identical to {{ mergeTargetBranch }}.
+            </div>
+            <pre
+              v-else
+              class="text-xs font-mono bg-surface p-3 rounded max-h-[50vh] overflow-auto whitespace-pre"
+            >{{ mergeDiff }}</pre>
+            <p v-if="mergeError" class="text-sm text-failed">{{ mergeError }}</p>
+          </div>
+          <template #footer>
+            <div class="flex justify-end gap-3">
+              <UButton variant="ghost" @click="showMergeModal = false">Cancel</UButton>
+              <UButton
+                :loading="mergeLoading"
+                :disabled="mergeDiff === '' || mergeDiffLoading"
+                icon="i-ph-git-merge-light"
+                @click="confirmMerge"
+              >
+                Merge into {{ mergeTargetBranch || 'main' }}
+              </UButton>
             </div>
           </template>
         </UCard>
@@ -310,6 +462,147 @@ const filteredHistory = computed(() => {
   if (!pid) return sessionStore.sessionHistory;
   return sessionStore.sessionHistory.filter((s) => s.projectId === pid);
 });
+
+// ── Branch chats grouping ────────────────────────────────────────────────────
+// Sidebar shows main chats at top level with their branch chats indented
+// underneath. We split filteredHistory into two views the template renders:
+//   - mainChatsInHistory : array of main sessions (kind='main' or undefined
+//                          for legacy rows that predate migration 015)
+//   - branchChatsByParent: map { parentSessionId -> branch sessions[] }
+// Branch chats whose parent isn't in the current project filter are dropped.
+const mainChatsInHistory = computed(() =>
+  filteredHistory.value.filter((s) => (s.kind ?? 'main') === 'main'),
+);
+const branchChatsByParent = computed<Record<string, typeof filteredHistory.value>>(() => {
+  const map: Record<string, typeof filteredHistory.value> = {};
+  for (const s of filteredHistory.value) {
+    if (s.kind === 'branch' && s.parentSessionId) {
+      (map[s.parentSessionId] ??= []).push(s);
+    }
+  }
+  // Newest branches at top within each group.
+  for (const k of Object.keys(map)) {
+    map[k]!.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  }
+  return map;
+});
+
+// ── Fork-as-branch modal ─────────────────────────────────────────────────────
+// User clicks the branch icon on a main chat row → modal collects an
+// optional name + scope globs (one per line) → POST /:id/branch and
+// navigates the chat into the new branch.
+const showForkModal = ref(false);
+const forkParentId = ref<string | null>(null);
+const forkParentLabel = ref<string>('');
+const forkForm = reactive({
+  name:        '',
+  scopeRaw:    '', // textarea — one glob per line
+});
+const forkLoading = ref(false);
+const forkError = ref('');
+
+function openForkModal(parent: { id: string; userPrompt: string; name?: string | null }) {
+  forkParentId.value = parent.id;
+  forkParentLabel.value = parent.name || parent.userPrompt || 'main chat';
+  forkForm.name = '';
+  forkForm.scopeRaw = '';
+  forkError.value = '';
+  showForkModal.value = true;
+}
+
+async function submitForkChat() {
+  if (!forkParentId.value) return;
+  forkLoading.value = true;
+  forkError.value = '';
+  try {
+    const globs = forkForm.scopeRaw
+      .split('\n')
+      .map((g) => g.trim())
+      .filter((g) => g.length > 0);
+    const { session } = await apiStore.createBranchChat(forkParentId.value, {
+      name:       forkForm.name.trim() || undefined,
+      scopeGlobs: globs,
+    });
+    // Add to history so the sidebar updates without a refetch.
+    sessionStore.sessionHistory.unshift(session);
+    showForkModal.value = false;
+    // Navigate the chat into the freshly created branch chat.
+    await loadSession(session.id);
+  } catch (err) {
+    forkError.value = (err as Error).message;
+  } finally {
+    forkLoading.value = false;
+  }
+}
+
+// ── Branch chat header info + merge flow ─────────────────────────────────────
+// When the active session is a branch chat, we surface its metadata in the
+// chat header and offer a Merge button that opens a diff-preview modal.
+// We read from sessionStore.currentSession; null when no session is loaded
+// or when the active session is a main chat.
+const currentBranchInfo = computed<{
+  name: string | null;
+  branchName: string | null;
+  scopeGlobs: string[];
+  mergedAt: Date | null;
+} | null>(() => {
+  const s = sessionStore.currentSession;
+  if (!s || s.kind !== 'branch') return null;
+  return {
+    name:        s.name ?? null,
+    branchName:  s.branchName ?? null,
+    scopeGlobs:  s.scopeGlobs ?? [],
+    mergedAt:    s.mergedAt ?? null,
+  };
+});
+
+const showMergeModal = ref(false);
+const mergeDiff = ref('');
+const mergeDiffLoading = ref(false);
+const mergeTargetBranch = ref('');
+const mergeLoading = ref(false);
+const mergeError = ref('');
+
+async function openMergeModal() {
+  const s = sessionStore.currentSession;
+  if (!s || s.kind !== 'branch') return;
+  showMergeModal.value = true;
+  mergeDiff.value = '';
+  mergeError.value = '';
+  mergeDiffLoading.value = true;
+  try {
+    const { diff, targetBranch } = await apiStore.getSessionDiff(s.id);
+    mergeDiff.value = diff;
+    mergeTargetBranch.value = targetBranch;
+  } catch (err) {
+    mergeError.value = (err as Error).message;
+  } finally {
+    mergeDiffLoading.value = false;
+  }
+}
+
+async function confirmMerge() {
+  const s = sessionStore.currentSession;
+  if (!s) return;
+  mergeLoading.value = true;
+  mergeError.value = '';
+  try {
+    const result = await apiStore.mergeBranchChat(s.id);
+    // Mutate the session in-place so the header shows "merged" and hides
+    // the Merge button without a refetch.
+    s.mergedAt = new Date();
+    const idx = sessionStore.sessionHistory.findIndex((x) => x.id === s.id);
+    if (idx >= 0) sessionStore.sessionHistory[idx]!.mergedAt = new Date();
+    showMergeModal.value = false;
+    if (result.alreadyUpToDate) {
+      // Nothing to communicate beyond closing the modal.
+    }
+  } catch (err) {
+    mergeError.value = (err as Error).message;
+  } finally {
+    mergeLoading.value = false;
+  }
+}
 
 // ── Inject modal ─────────────────────────────────────────────────────────────
 const showInjectModal = ref(false);

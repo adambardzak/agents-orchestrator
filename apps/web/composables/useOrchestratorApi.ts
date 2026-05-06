@@ -128,14 +128,71 @@ export function useOrchestratorApi() {
     return res.json() as Promise<CreateSessionResponse>;
   }
 
-  async function listSessions(opts?: { limit?: number; projectId?: string }): Promise<ListSessionsResponse> {
+  async function listSessions(opts?: { limit?: number; projectId?: string; kind?: 'main' | 'branch'; parent?: string }): Promise<ListSessionsResponse> {
     const params = new URLSearchParams();
-    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.limit)     params.set('limit',     String(opts.limit));
     if (opts?.projectId) params.set('projectId', opts.projectId);
+    if (opts?.kind)      params.set('kind',      opts.kind);
+    if (opts?.parent)    params.set('parent',    opts.parent);
     const qs = params.toString() ? `?${params.toString()}` : '';
     const res = await req(`/api/sessions${qs}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<ListSessionsResponse>;
+  }
+
+  /**
+   * Forks a focused branch chat off the given parent session. The new chat
+   * inherits project + contextType, gets its own git branch, and applies the
+   * supplied scope globs as soft scope to every agent run inside it.
+   */
+  async function createBranchChat(parentId: string, payload: {
+    name?:        string;
+    scopeGlobs?:  string[];
+    userPrompt?:  string;
+  }): Promise<{ session: import('@agent-orchestrator/shared').Session }> {
+    const res = await req(`/api/sessions/${parentId}/branch`, {
+      method: 'POST',
+      body:   JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+    return res.json() as Promise<{ session: import('@agent-orchestrator/shared').Session }>;
+  }
+
+  /**
+   * Returns the unified diff of a branch chat's git branch vs. its parent.
+   * Used by the merge prompt to show the user what they're about to accept.
+   */
+  async function getSessionDiff(sessionId: string): Promise<{
+    diff:          string;
+    sourceBranch:  string;
+    targetBranch:  string;
+  }> {
+    const res = await req(`/api/sessions/${sessionId}/diff`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+    return res.json() as Promise<{ diff: string; sourceBranch: string; targetBranch: string }>;
+  }
+
+  /**
+   * Merges a branch chat into its parent's branch (--no-ff). On conflict the
+   * server returns 409 with a `detail` string — surface it to the user so
+   * they can resolve in the workspace.
+   */
+  async function mergeBranchChat(sessionId: string): Promise<{
+    merged:           boolean;
+    sha:              string | null;
+    alreadyUpToDate:  boolean;
+    targetBranch:     string;
+    sourceBranch:     string;
+  }> {
+    const res = await req(`/api/sessions/${sessionId}/merge`, { method: 'POST', body: '{}' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({})) as { error?: string; detail?: string };
+      throw new Error(err.detail ? `${err.error}: ${err.detail}` : (err.error ?? `HTTP ${res.status}`));
+    }
+    return res.json() as Promise<{
+      merged: boolean; sha: string | null; alreadyUpToDate: boolean;
+      targetBranch: string; sourceBranch: string;
+    }>;
   }
 
   async function getSession(sessionId: string): Promise<GetSessionResponse> {
@@ -329,6 +386,9 @@ export function useOrchestratorApi() {
     createSession,
     listSessions,
     getSession,
+    createBranchChat,
+    getSessionDiff,
+    mergeBranchChat,
     cancelSession,
     deleteSession,
     listAgents,

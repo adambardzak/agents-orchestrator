@@ -404,6 +404,48 @@ export class AgentWorker {
       this.logger.warn({ err, taskId: task.id }, 'KB retrieval failed, continuing without context');
     }
 
+    // ── Branch chat soft scope ──────────────────────────────────────────────
+    // When the task's session is a branch chat with scope_globs configured,
+    // inject a focus block into the system prompt so the agent prioritizes
+    // those files. This is "soft scope" — the agent can still explore other
+    // files when investigating; we just bias its attention.
+    try {
+      const { rows: scopeRows } = await this.db.query<{
+        kind: string; scope_globs: unknown; name: string | null;
+      }>(
+        `SELECT kind, scope_globs, name FROM sessions WHERE id = $1`,
+        [task.sessionId],
+      );
+      const scopeRow = scopeRows[0];
+      if (scopeRow && scopeRow.kind === 'branch') {
+        const globs = Array.isArray(scopeRow.scope_globs) ? (scopeRow.scope_globs as string[]) : [];
+        if (globs.length > 0) {
+          const label = scopeRow.name ? `"${scopeRow.name}"` : 'this branch chat';
+          const scopeBlock = [
+            '',
+            '## Branch Chat Scope',
+            '',
+            `You are working inside a focused branch chat ${label}. Prioritize`,
+            'changes to the files matching these patterns and avoid touching',
+            'unrelated code unless absolutely necessary:',
+            '',
+            ...globs.map((g) => `- \`${g}\``),
+            '',
+            'You may still read other files when investigating, but limit edits',
+            'to the scope above. If a fix genuinely requires changes elsewhere,',
+            'mention it explicitly in your final summary.',
+          ].join('\n');
+          resolvedExtraContext = (resolvedExtraContext ?? '') + '\n' + scopeBlock;
+          this.logger.info(
+            { taskId: task.id, sessionId: task.sessionId, globCount: globs.length },
+            'Branch chat scope injected into agent context',
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, taskId: task.id }, 'Failed to load branch chat scope (continuing)');
+    }
+
     // ── status: pending → running ────────────────────────────────────────────
     await this.onTaskStatusChange(task.id, 'running');
     this.eventBus.publish(

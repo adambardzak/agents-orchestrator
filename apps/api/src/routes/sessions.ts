@@ -8,6 +8,7 @@ import { ORCHESTRATOR_AGENT } from '../agents/definitions.js';
 import { env } from '../config/env.js';
 import { MODEL_ROUTING } from '../config/models.js';
 import { mapSession, mapTask } from '../db/mappers.js';
+import { createBranchFrom, getDiff, mergeBranch } from '../services/git/workspace-git.js';
 
 const createSessionSchema = z.object({
   projectId: z.string().uuid(),
@@ -117,18 +118,28 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // ── GET /api/sessions — list recent sessions ────────────────────────────────
-  fastify.get<{ Querystring: { limit?: string; projectId?: string } }>(
+  // Optional filters:
+  //   - projectId : restrict to one project
+  //   - kind      : 'main' (default for sidebar root list) or 'branch'
+  //   - parent    : list only branch chats whose parent_session_id matches
+  fastify.get<{ Querystring: { limit?: string; projectId?: string; kind?: string; parent?: string } }>(
     '/api/sessions',
     async (request, reply) => {
       const limit = Math.min(parseInt(request.query.limit ?? '30', 10), 100);
-      const { projectId } = request.query;
+      const { projectId, kind, parent } = request.query;
 
+      const conds: string[] = [];
+      const params: unknown[] = [limit];
+      if (projectId) { conds.push(`project_id = $${params.length + 1}`); params.push(projectId); }
+      if (kind)      { conds.push(`kind       = $${params.length + 1}`); params.push(kind); }
+      if (parent)    { conds.push(`parent_session_id = $${params.length + 1}`); params.push(parent); }
+
+      const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
       const { rows } = await fastify.pg.query(
-        `SELECT * FROM sessions
-         ${projectId ? 'WHERE project_id = $2' : ''}
-         ORDER BY created_at DESC
-         LIMIT $1`,
-        projectId ? [limit, projectId] : [limit],
+        `SELECT * FROM sessions ${where}
+          ORDER BY created_at DESC
+          LIMIT $1`,
+        params,
       );
 
       return { sessions: rows.map((r) => mapSession(r as Record<string, unknown>)) };
@@ -306,6 +317,231 @@ Please now produce the execution plan (no further clarification needed).`;
       await fastify.taskQueue.enqueueTask(newTask, githubToken);
 
       return reply.status(201).send({ task: newTask });
+    },
+  );
+
+  // ── POST /api/sessions/:id/branch ────────────────────────────────────────────
+  // Fork a focused "branch chat" off an existing session. Creates a new
+  // session row (kind='branch') linked to the parent, allocates a fresh git
+  // branch in the project workspace, and returns the new session — the FE
+  // navigates the chat to it. The branch chat shares the same project +
+  // contextType as its parent and inherits the parent's budget cap.
+  //
+  // Optional `name` becomes the sidebar label and seeds the git branch slug.
+  // Optional `scopeGlobs` are injected as soft scope into every agent's
+  // system prompt for this branch (no workspace filtering — the agent can
+  // still read other files when needed).
+  fastify.post<{ Params: { id: string } }>(
+    '/api/sessions/:id/branch',
+    async (request, reply) => {
+      const parentId = request.params.id;
+      const body = z.object({
+        name:        z.string().min(1).max(120).optional(),
+        scopeGlobs:  z.array(z.string().min(1).max(200)).max(50).default([]),
+        userPrompt:  z.string().min(1).max(10_000).optional(),
+      }).parse(request.body);
+
+      // Load parent session to inherit project + context.
+      const { rows: [parentRow] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [parentId],
+      );
+      if (!parentRow) return reply.status(404).send({ error: 'Parent session not found' });
+      const parent = mapSession(parentRow as Record<string, unknown>);
+
+      // Branch chats can only fork off main chats for now — keeps the tree
+      // shallow (1 level) and avoids fork-of-fork merge complexity. Easy to
+      // relax later by changing this check to `parent.kind === 'branch' &&
+      // parent.parentSessionId` to walk up.
+      if (parent.kind !== 'main') {
+        return reply.status(400).send({
+          error: 'Branch chats can only be forked from main chats (no nested branches yet)',
+        });
+      }
+
+      const newSessionId = uuid();
+      const slug = (body.name ?? 'work')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 40) || 'work';
+      const branchName = `agent/branch-${slug}-${newSessionId.slice(0, 8)}`;
+
+      await fastify.pg.query(
+        `INSERT INTO sessions
+           (id, project_id, context_type, user_prompt, budget_cap_usd,
+            kind, parent_session_id, name, scope_globs, branch_name)
+         VALUES ($1, $2, $3, $4, $5, 'branch', $6, $7, $8::jsonb, $9)`,
+        [
+          newSessionId,
+          parent.projectId,
+          parent.contextType,
+          body.userPrompt ?? body.name ?? 'Branch chat',
+          parent.budgetCapUsd,
+          parentId,
+          body.name ?? null,
+          JSON.stringify(body.scopeGlobs),
+          branchName,
+        ],
+      );
+
+      // Best-effort: create the git branch in the project workspace so the
+      // first agent run on this chat starts from a known ref. If the project
+      // has no workspace yet (lazy-cloned), the worker will materialize it
+      // and we'll create the branch on first commit instead — non-fatal.
+      try {
+        const { rows: projectRows } = await fastify.pg.query<{ workspace_path: string | null }>(
+          'SELECT workspace_path FROM projects WHERE id = $1',
+          [parent.projectId],
+        );
+        const projectRoot = projectRows[0]?.workspace_path
+          ?? nodePath.join(env.WORKSPACES_ROOT, parent.projectId);
+        await createBranchFrom({ workspaceDir: projectRoot, newBranch: branchName });
+      } catch (err) {
+        fastify.log.warn(
+          { sessionId: newSessionId, branchName, err: (err as Error).message },
+          'Could not pre-create git branch for branch chat (will be created on first commit)',
+        );
+      }
+
+      const { rows: [newRow] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [newSessionId],
+      );
+      return reply.status(201).send({
+        session: mapSession(newRow as Record<string, unknown>),
+      });
+    },
+  );
+
+  // ── GET /api/sessions/:id/diff ───────────────────────────────────────────────
+  // Returns a unified diff of this branch chat's git branch against its
+  // parent's branch (typically `main`). Used by the merge prompt UI.
+  // 404 when the session is not a branch chat. Empty `diff` = nothing changed.
+  fastify.get<{ Params: { id: string } }>(
+    '/api/sessions/:id/diff',
+    async (request, reply) => {
+      const { rows: [row] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [request.params.id],
+      );
+      if (!row) return reply.status(404).send({ error: 'Session not found' });
+      const session = mapSession(row as Record<string, unknown>);
+      if (session.kind !== 'branch' || !session.branchName) {
+        return reply.status(400).send({ error: 'Diff is only available for branch chats' });
+      }
+      const { rows: [parentRow] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [session.parentSessionId],
+      );
+      const parent = parentRow ? mapSession(parentRow as Record<string, unknown>) : null;
+      // Parent's effective branch — main chat doesn't have its own branch_name,
+      // so we use the project's default branch (HEAD on the parent ref).
+      const parentBranch = parent?.branchName ?? 'HEAD';
+
+      const { rows: projectRows } = await fastify.pg.query<{ workspace_path: string | null }>(
+        'SELECT workspace_path FROM projects WHERE id = $1',
+        [session.projectId],
+      );
+      const projectRoot = projectRows[0]?.workspace_path
+        ?? nodePath.join(env.WORKSPACES_ROOT, session.projectId);
+
+      try {
+        const diff = await getDiff({
+          workspaceDir: projectRoot,
+          from: parentBranch,
+          to:   session.branchName,
+        });
+        return { diff, sourceBranch: session.branchName, targetBranch: parentBranch };
+      } catch (err) {
+        return reply.status(500).send({ error: (err as Error).message });
+      }
+    },
+  );
+
+  // ── POST /api/sessions/:id/merge ─────────────────────────────────────────────
+  // Merges this branch chat's git branch into its parent's branch (--no-ff)
+  // and marks the session as merged. Returns the merge commit SHA.
+  // The session row stays — UI can keep showing it as "merged" in the sidebar.
+  fastify.post<{ Params: { id: string } }>(
+    '/api/sessions/:id/merge',
+    async (request, reply) => {
+      const { rows: [row] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [request.params.id],
+      );
+      if (!row) return reply.status(404).send({ error: 'Session not found' });
+      const session = mapSession(row as Record<string, unknown>);
+      if (session.kind !== 'branch' || !session.branchName) {
+        return reply.status(400).send({ error: 'Only branch chats can be merged' });
+      }
+      if (session.mergedAt) {
+        return reply.status(409).send({ error: 'Branch already merged' });
+      }
+
+      const { rows: [parentRow] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [session.parentSessionId],
+      );
+      const parent = parentRow ? mapSession(parentRow as Record<string, unknown>) : null;
+      // Default branch to merge into when parent is the main chat — we read
+      // the workspace's current branch as the project's effective default.
+      const targetBranch = parent?.branchName ?? null;
+
+      const { rows: projectRows } = await fastify.pg.query<{ workspace_path: string | null }>(
+        'SELECT workspace_path FROM projects WHERE id = $1',
+        [session.projectId],
+      );
+      const projectRoot = projectRows[0]?.workspace_path
+        ?? nodePath.join(env.WORKSPACES_ROOT, session.projectId);
+
+      // If targetBranch is null (parent is main chat), figure out the default
+      // branch by reading the workspace's current HEAD before any checkout.
+      let effectiveTarget = targetBranch;
+      if (!effectiveTarget) {
+        try {
+          const { simpleGit } = await import('simple-git');
+          const status = await simpleGit(projectRoot).branchLocal();
+          // Prefer 'main' or 'master' if present, else current branch.
+          effectiveTarget = ['main', 'master'].find((b) => status.all.includes(b)) ?? status.current;
+        } catch {
+          effectiveTarget = 'main';
+        }
+      }
+      if (!effectiveTarget) {
+        return reply.status(500).send({ error: 'Could not determine target branch for merge' });
+      }
+
+      try {
+        const result = await mergeBranch({
+          workspaceDir:  projectRoot,
+          sourceBranch:  session.branchName,
+          targetBranch:  effectiveTarget,
+          message:       session.name
+            ? `Merge branch chat: ${session.name}`
+            : `Merge branch chat ${session.id.slice(0, 8)}`,
+          authorName:    'Agent Orchestrator',
+          authorEmail:   'agents@orchestrator.local',
+        });
+        await fastify.pg.query(
+          `UPDATE sessions SET merged_at = NOW(), updated_at = NOW() WHERE id = $1`,
+          [session.id],
+        );
+        return reply.send({
+          merged:           true,
+          sha:              result.sha,
+          alreadyUpToDate:  result.alreadyUpToDate,
+          targetBranch:     effectiveTarget,
+          sourceBranch:     session.branchName,
+        });
+      } catch (err) {
+        // Most common failure: merge conflict. Surface the raw stderr so the
+        // user knows which files to fix in the workspace.
+        return reply.status(409).send({
+          error:   'Merge failed (likely conflicts) — resolve in the workspace and retry',
+          detail:  (err as Error).message,
+        });
+      }
     },
   );
 

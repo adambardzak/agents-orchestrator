@@ -180,6 +180,58 @@ export async function getDiff(args: {
   return out.length > cap ? out.slice(0, cap) + '\n...[diff truncated]' : out;
 }
 
+/**
+ * Branch chats helper — creates a new branch off `fromBranch` (or current
+ * HEAD if omitted) without switching workspace state. Idempotent: if the
+ * branch already exists we leave it alone.
+ *
+ * Returns the branch name actually used (caller passes it in, we just
+ * confirm creation). Used by sessions.createBranch().
+ */
+export async function createBranchFrom(args: {
+  workspaceDir: string;
+  newBranch:    string;
+  fromBranch?:  string;
+}): Promise<string> {
+  const git = simpleGit(args.workspaceDir);
+  const branches = await git.branchLocal();
+  if (branches.all.includes(args.newBranch)) return args.newBranch;
+  // `git branch <new> <from>` creates the ref without checking out.
+  const fromRef = args.fromBranch ?? branches.current ?? 'HEAD';
+  await git.raw(['branch', args.newBranch, fromRef]);
+  return args.newBranch;
+}
+
+/**
+ * Branch chats helper — merges `sourceBranch` into `targetBranch` with
+ * --no-ff so the branch chat's history stays visible. Returns the merge
+ * commit SHA on success, or null if there was nothing to merge (already
+ * up-to-date).
+ *
+ * Throws on conflict — UI should catch and present the conflict files
+ * so the user can resolve in the workspace before retrying.
+ */
+export async function mergeBranch(args: {
+  workspaceDir:  string;
+  sourceBranch:  string;
+  targetBranch:  string;
+  message?:      string;
+  authorName:    string;
+  authorEmail:   string;
+}): Promise<{ sha: string | null; alreadyUpToDate: boolean }> {
+  const git = simpleGit(args.workspaceDir);
+  await git.addConfig('user.name',  args.authorName,  false, 'local');
+  await git.addConfig('user.email', args.authorEmail, false, 'local');
+  await git.checkout(args.targetBranch);
+  const message = args.message ?? `Merge branch '${args.sourceBranch}' into ${args.targetBranch}`;
+  // --no-ff so the branch chat shows up as a distinct ref in the history;
+  // --no-edit keeps the commit non-interactive.
+  const out = await git.raw(['merge', '--no-ff', '--no-edit', '-m', message, args.sourceBranch]);
+  if (/Already up to date/i.test(out)) return { sha: null, alreadyUpToDate: true };
+  const sha = (await git.revparse(['HEAD'])).trim();
+  return { sha, alreadyUpToDate: false };
+}
+
 // ── private ──────────────────────────────────────────────────────────────────
 async function describeCommit(git: SimpleGit, sha: string, branch: string): Promise<CommitResult> {
   // `git show --stat --format="%H%n%s"` gives us the header + per-file stats.

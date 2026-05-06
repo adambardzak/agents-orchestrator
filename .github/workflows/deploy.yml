@@ -90,12 +90,6 @@ jobs:
             deploy/Caddyfile \
             vps:/opt/agent-orchestrator/compose/
 
-      - name: Sync migrations (for one-shot migrate container)
-        run: |
-          rsync -avz --delete \
-            apps/api/src/db/migrations/ \
-            vps:/opt/agent-orchestrator/migrations/
-
       - name: Deploy on VPS
         env:
           IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
@@ -109,28 +103,8 @@ jobs:
           echo "▶ Pulling new images"
           docker compose -f docker-compose.netcup.yml --env-file ../.env pull api web
 
-          echo "▶ Ensuring infra (postgres, redis) is up"
-          docker compose -f docker-compose.netcup.yml --env-file ../.env up -d postgres redis
-
-          echo "▶ Waiting for postgres to be healthy"
-          for i in \$(seq 1 30); do
-            STATUS=\$(docker inspect --format '{{.State.Health.Status}}' orchestrator-postgres 2>/dev/null || echo "starting")
-            if [ "\$STATUS" = "healthy" ]; then break; fi
-            sleep 2
-          done
-
-          echo "▶ Running migrations (one-shot container)"
-          docker run --rm --network compose_orchestrator-net \
-            -v /opt/agent-orchestrator/migrations:/migrations:ro \
-            -e PGPASSWORD="\$(grep ^POSTGRES_PASSWORD ../.env | cut -d= -f2-)" \
-            postgres:16-alpine \
-            sh -c 'for f in /migrations/*.sql; do
-              echo "  ▶ \$f";
-              psql -h orchestrator-postgres -U orchestrator -d orchestrator -v ON_ERROR_STOP=1 -f "\$f" || exit 1;
-            done'
-
-          echo "▶ Recreating api + web with new images"
-          docker compose -f docker-compose.netcup.yml --env-file ../.env up -d api web caddy code-server
+          echo "▶ Bringing stack up (api runs its own migrations on boot)"
+          docker compose -f docker-compose.netcup.yml --env-file ../.env up -d
 
           echo "▶ Pruning old images"
           docker image prune -f --filter "until=72h"
@@ -142,15 +116,18 @@ jobs:
       - name: Smoke test
         run: |
           set -e
-          for i in $(seq 1 20); do
-            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' -u admin:\$(grep ^BASIC_AUTH_PLAIN /opt/agent-orchestrator/.env | cut -d= -f2-) http://127.0.0.1:8091/api/healthz" 2>/dev/null || echo "000")
+          # Fetch basic auth credential from server (held only there in .env)
+          AUTH=$(ssh vps "grep ^BASIC_AUTH_PLAIN /opt/agent-orchestrator/.env | cut -d= -f2-")
+          for i in $(seq 1 30); do
+            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' -u admin:${AUTH} http://127.0.0.1:8091/api/healthz" 2>/dev/null || echo "000")
             echo "Attempt $i: HTTP $CODE"
             if [ "$CODE" = "200" ]; then
               echo "✓ Smoke test passed"
               exit 0
             fi
-            sleep 3
+            sleep 4
           done
-          echo "✗ Smoke test failed after 20 attempts"
-          ssh vps "docker logs --tail 60 orchestrator-api"
+          echo "✗ Smoke test failed after 30 attempts"
+          ssh vps "docker logs --tail 80 orchestrator-api"
+          ssh vps "docker logs --tail 30 orchestrator-caddy"
           exit 1

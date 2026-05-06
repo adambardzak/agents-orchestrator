@@ -127,9 +127,20 @@
               merged
             </UBadge>
           </div>
-          <div v-if="(currentBranchInfo.scopeGlobs?.length ?? 0) > 0" class="text-xs text-text-muted truncate">
-            scope: {{ currentBranchInfo.scopeGlobs!.join(', ') }}
-          </div>
+          <button
+            class="text-xs text-text-muted truncate hover:text-accent text-left max-w-full"
+            :title="(currentBranchInfo.scopeGlobs?.length ?? 0) > 0 ? 'Click to edit scope' : 'Click to add scope patterns'"
+            @click="openScopeEditor"
+          >
+            <template v-if="(currentBranchInfo.scopeGlobs?.length ?? 0) > 0">
+              scope: {{ currentBranchInfo.scopeGlobs!.join(', ') }}
+              <UIcon name="i-ph-pencil-simple-light" class="inline w-3 h-3 ml-0.5 align-text-bottom" />
+            </template>
+            <template v-else>
+              <UIcon name="i-ph-plus-light" class="inline w-3 h-3 mr-0.5 align-text-bottom" />
+              add scope
+            </template>
+          </button>
         </div>
         <UButton
           v-if="!currentBranchInfo.mergedAt"
@@ -305,11 +316,67 @@
         </UCard>
       </UModal>
 
+      <!--
+        Scope editor modal — edits a branch chat's name + scope globs after
+        creation. Reachable from the branch header band (click the scope
+        summary). The agent worker re-reads scope_globs on every task, so
+        edits take effect on the next prompt without a restart.
+      -->
+      <UModal v-model="showScopeEditor" :ui="{ width: 'sm:max-w-lg' }">
+        <UCard>
+          <template #header>
+            <p class="font-semibold">Edit branch chat scope</p>
+          </template>
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs font-medium text-text-muted">Name</label>
+              <UInput
+                v-model="scopeEditorName"
+                placeholder="e.g. Settings page polish"
+                size="sm"
+              />
+            </div>
+            <div>
+              <label class="text-xs font-medium text-text-muted">
+                Scope globs (one per line)
+              </label>
+              <UTextarea
+                v-model="scopeEditorGlobsText"
+                :rows="6"
+                placeholder="apps/web/pages/settings/**&#10;apps/web/components/Settings*.vue"
+                class="font-mono text-xs"
+              />
+              <p class="text-xs text-text-muted mt-1">
+                Injected into every task as a "Branch Chat Scope" instruction —
+                the agent is told to focus on these paths only. Leave empty to
+                drop the scope hint entirely.
+              </p>
+            </div>
+            <p v-if="scopeEditorError" class="text-sm text-failed">{{ scopeEditorError }}</p>
+          </div>
+          <template #footer>
+            <div class="flex justify-end gap-3">
+              <UButton variant="ghost" @click="showScopeEditor = false">Cancel</UButton>
+              <UButton
+                :loading="scopeEditorLoading"
+                icon="i-ph-floppy-disk-light"
+                @click="saveScopeEditor"
+              >
+                Save
+              </UButton>
+            </div>
+          </template>
+        </UCard>
+      </UModal>
+
       <!-- Merge branch chat modal -->
       <UModal v-model="showMergeModal" :ui="{ width: 'sm:max-w-3xl' }">
         <UCard>
           <template #header>
-            <p class="font-semibold">Merge branch chat into {{ mergeTargetBranch || 'main' }}</p>
+            <p class="font-semibold">
+              {{ mergeAsPR ? `Open Pull Request → ${mergeTargetBranch || 'main'}`
+                            : `Merge branch chat into ${mergeTargetBranch || 'main'}` }}
+            </p>
           </template>
           <div class="space-y-3">
             <div v-if="mergeDiffLoading" class="flex items-center gap-2 text-sm text-text-muted">
@@ -323,18 +390,51 @@
               v-else
               class="text-xs font-mono bg-surface p-3 rounded max-h-[50vh] overflow-auto whitespace-pre"
             >{{ mergeDiff }}</pre>
+
+            <!--
+              PR toggle — opt-in per merge. When enabled, the API pushes the
+              branch and opens a PR via the GitHub provider instead of doing
+              a local --no-ff merge. Falls back with a clear error if the
+              project has no GitHub remote.
+            -->
+            <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <UCheckbox v-model="mergeAsPR" />
+              <span>Open as Pull Request instead of local merge</span>
+            </label>
+
+            <UAlert
+              v-if="mergePullRequest"
+              icon="i-ph-git-pull-request-light"
+              color="completed"
+              variant="subtle"
+            >
+              <template #title>
+                Pull Request #{{ mergePullRequest.number }} opened
+              </template>
+              <template #description>
+                <a :href="mergePullRequest.htmlUrl" target="_blank" rel="noopener" class="underline">
+                  {{ mergePullRequest.htmlUrl }}
+                </a>
+              </template>
+            </UAlert>
+
             <p v-if="mergeError" class="text-sm text-failed">{{ mergeError }}</p>
           </div>
           <template #footer>
             <div class="flex justify-end gap-3">
-              <UButton variant="ghost" @click="showMergeModal = false">Cancel</UButton>
+              <UButton variant="ghost" @click="showMergeModal = false">
+                {{ mergePullRequest ? 'Close' : 'Cancel' }}
+              </UButton>
               <UButton
+                v-if="!mergePullRequest"
                 :loading="mergeLoading"
                 :disabled="mergeDiff === '' || mergeDiffLoading"
-                icon="i-ph-git-merge-light"
+                :icon="mergeAsPR ? 'i-ph-git-pull-request-light' : 'i-ph-git-merge-light'"
                 @click="confirmMerge"
               >
-                Merge into {{ mergeTargetBranch || 'main' }}
+                {{ mergeAsPR
+                    ? `Open PR → ${mergeTargetBranch || 'main'}`
+                    : `Merge into ${mergeTargetBranch || 'main'}` }}
               </UButton>
             </div>
           </template>
@@ -352,6 +452,46 @@
           description="Set your GitHub token in Settings to use the orchestrator."
           class="mb-3"
         />
+
+        <!--
+          Branch chat suggestion banner — fires when the user types a prompt
+          that looks "narrow" (mentions a specific file/path/glob and uses
+          focus-y phrasing). We never auto-fork; we just surface the option.
+          Only shown in main chats — branch chats already have a focused
+          scope so the suggestion would be noise.
+        -->
+        <div
+          v-if="branchSuggestion"
+          class="mb-3 flex items-center justify-between gap-3 rounded-md border border-accent/30 bg-accent/5 px-3 py-2 text-sm"
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <UIcon name="i-ph-git-branch-light" class="w-4 h-4 text-accent shrink-0" />
+            <span class="truncate">
+              This looks narrowly scoped — fork as a branch chat?
+              <code v-if="branchSuggestion.detectedPath" class="text-xs text-text-muted ml-1">
+                {{ branchSuggestion.detectedPath }}
+              </code>
+            </span>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <UButton
+              size="xs"
+              variant="soft"
+              icon="i-ph-git-branch-light"
+              @click="forkFromSuggestion"
+            >
+              Fork as branch
+            </UButton>
+            <button
+              type="button"
+              class="text-xs text-text-muted hover:text-text-primary"
+              @click="branchSuggestionDismissed = true"
+              title="Dismiss for this prompt"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
 
         <div class="flex gap-2">
           <UTextarea
@@ -501,6 +641,73 @@ const forkForm = reactive({
 const forkLoading = ref(false);
 const forkError = ref('');
 
+// ── Branch chat suggestion heuristic ─────────────────────────────────────────
+// Cheap regex-based detector: triggers when the prompt mentions a focused
+// scope keyword AND a path/file/glob. We intentionally keep this dumb and
+// transparent — no LLM call, no surprise. The user can dismiss for the
+// current draft; suggestion re-appears on next prompt.
+//
+// The heuristic is bilingual (CS + EN) because the orchestrator is
+// developed/used predominantly in mixed-language conversations.
+const NARROW_KEYWORDS = [
+  // english
+  /\bonly\b/i, /\bjust\b/i, /\bspecifically\b/i, /\bsmall (fix|change|tweak)\b/i,
+  /\bthis (file|component|button|page)\b/i, /\bquick (fix|change)\b/i,
+  // czech
+  /\bjenom\b/i, /\bjen\b/i, /\bpouze\b/i, /\b(uprav|změň|oprav)it? jen\b/i,
+  /\btenhle (soubor|komponent|button|tla[čc][ií]tk)/i, /\bmal[áa] (změna|úprava|fix)\b/i,
+];
+// File/path/glob patterns. We accept obvious paths (slash, dot+ext) and globs.
+const PATH_REGEX = /([\w@.\-/]+\/[\w@.\-/*]+|\b[\w-]+\.(?:vue|tsx?|jsx?|css|scss|md|json|ya?ml|py|rs|go|java|sql|sh)\b|[\w/]+\*\*?)/i;
+
+const branchSuggestionDismissed = ref(false);
+
+// Reset dismissal when the prompt clears so a fresh draft re-evaluates.
+watch(() => inputPrompt.value, (val, old) => {
+  if (val.trim() === '' && (old ?? '').trim() !== '') {
+    branchSuggestionDismissed.value = false;
+  }
+});
+
+const branchSuggestion = computed<{ detectedPath: string | null } | null>(() => {
+  if (branchSuggestionDismissed.value) return null;
+  // Only suggest when in a main chat context — branch chats already have
+  // focused scope so the banner would be tautological.
+  const cur = sessionStore.currentSession;
+  if (cur && cur.kind === 'branch') return null;
+  const text = inputPrompt.value.trim();
+  if (text.length < 20) return null;
+  const hasNarrowKeyword = NARROW_KEYWORDS.some((re) => re.test(text));
+  if (!hasNarrowKeyword) return null;
+  const pathMatch = text.match(PATH_REGEX);
+  // Require at least the keyword. Path is bonus — surfaces it as the
+  // suggested scope hint when present.
+  return { detectedPath: pathMatch ? pathMatch[0] : null };
+});
+
+/**
+ * Forks the current chat (or, if no chat is active, the most recent main
+ * chat in this project) using the input prompt's detected path as a
+ * pre-filled scope hint.
+ */
+function forkFromSuggestion() {
+  const cur = sessionStore.currentSession;
+  // Find the parent main chat: prefer the active session if it's main,
+  // otherwise the most recent main chat in history.
+  const parent = cur && cur.kind === 'main'
+    ? cur
+    : sessionStore.sessionHistory.find((s) => s.kind === 'main' && s.projectId === projectStore.activeProject?.id);
+  if (!parent) {
+    // No parent main chat exists yet — nothing to fork from. Drop the banner.
+    branchSuggestionDismissed.value = true;
+    return;
+  }
+  openForkModal({ id: parent.id, userPrompt: parent.userPrompt, name: parent.name ?? null });
+  // Pre-fill the scope hint from the detected path.
+  const hint = branchSuggestion.value?.detectedPath;
+  if (hint) forkForm.scopeRaw = hint;
+}
+
 function openForkModal(parent: { id: string; userPrompt: string; name?: string | null }) {
   forkParentId.value = parent.id;
   forkParentLabel.value = parent.name || parent.userPrompt || 'main chat';
@@ -562,6 +769,10 @@ const mergeDiffLoading = ref(false);
 const mergeTargetBranch = ref('');
 const mergeLoading = ref(false);
 const mergeError = ref('');
+// PR mode (opt-in per merge). When true, the API pushes the branch and opens
+// a Pull Request via the GitHub provider instead of a local --no-ff merge.
+const mergeAsPR = ref(false);
+const mergePullRequest = ref<{ number: number; htmlUrl: string; state: string } | null>(null);
 
 async function openMergeModal() {
   const s = sessionStore.currentSession;
@@ -569,6 +780,8 @@ async function openMergeModal() {
   showMergeModal.value = true;
   mergeDiff.value = '';
   mergeError.value = '';
+  mergeAsPR.value = false;
+  mergePullRequest.value = null;
   mergeDiffLoading.value = true;
   try {
     const { diff, targetBranch } = await apiStore.getSessionDiff(s.id);
@@ -587,20 +800,76 @@ async function confirmMerge() {
   mergeLoading.value = true;
   mergeError.value = '';
   try {
-    const result = await apiStore.mergeBranchChat(s.id);
-    // Mutate the session in-place so the header shows "merged" and hides
-    // the Merge button without a refetch.
+    const result = await apiStore.mergeBranchChat(s.id, {
+      createPullRequest: mergeAsPR.value,
+    });
+    if (result.pullRequest) {
+      // PR mode — keep modal open so the user sees the link. We do NOT mark
+      // the session merged: that happens when the PR itself is merged on the
+      // remote, which is out of scope here.
+      mergePullRequest.value = result.pullRequest;
+      return;
+    }
+    // Local merge mode — flip the session to "merged" in place so the header
+    // band reflects the new state without a refetch.
     s.mergedAt = new Date();
     const idx = sessionStore.sessionHistory.findIndex((x) => x.id === s.id);
     if (idx >= 0) sessionStore.sessionHistory[idx]!.mergedAt = new Date();
     showMergeModal.value = false;
-    if (result.alreadyUpToDate) {
-      // Nothing to communicate beyond closing the modal.
-    }
   } catch (err) {
     mergeError.value = (err as Error).message;
   } finally {
     mergeLoading.value = false;
+  }
+}
+
+// ── Scope editor (branch chat) ───────────────────────────────────────────────
+// Edits the active branch chat's name + scope globs in place. Backed by
+// PATCH /api/sessions/:id which only accepts branch chats. We keep the form
+// state separate from the session row so closing the modal discards drafts.
+const showScopeEditor    = ref(false);
+const scopeEditorName    = ref('');
+const scopeEditorGlobsText = ref('');
+const scopeEditorLoading = ref(false);
+const scopeEditorError   = ref('');
+
+function openScopeEditor() {
+  const s = sessionStore.currentSession;
+  if (!s || s.kind !== 'branch') return;
+  scopeEditorName.value      = s.name ?? '';
+  scopeEditorGlobsText.value = (s.scopeGlobs ?? []).join('\n');
+  scopeEditorError.value     = '';
+  showScopeEditor.value      = true;
+}
+
+async function saveScopeEditor() {
+  const s = sessionStore.currentSession;
+  if (!s || s.kind !== 'branch') return;
+  scopeEditorLoading.value = true;
+  scopeEditorError.value   = '';
+  try {
+    const globs = scopeEditorGlobsText.value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const { session: updated } = await apiStore.updateSession(s.id, {
+      name:       scopeEditorName.value.trim() || null,
+      scopeGlobs: globs,
+    });
+    // Mutate in-place so the header band reflects the new scope without a
+    // session reload (which would also reset chat state unnecessarily).
+    s.name       = updated.name ?? null;
+    s.scopeGlobs = updated.scopeGlobs ?? [];
+    const idx = sessionStore.sessionHistory.findIndex((x) => x.id === s.id);
+    if (idx >= 0) {
+      sessionStore.sessionHistory[idx]!.name       = updated.name ?? null;
+      sessionStore.sessionHistory[idx]!.scopeGlobs = updated.scopeGlobs ?? [];
+    }
+    showScopeEditor.value = false;
+  } catch (err) {
+    scopeEditorError.value = (err as Error).message;
+  } finally {
+    scopeEditorLoading.value = false;
   }
 }
 

@@ -8,7 +8,53 @@ import { ORCHESTRATOR_AGENT } from '../agents/definitions.js';
 import { env } from '../config/env.js';
 import { MODEL_ROUTING } from '../config/models.js';
 import { mapSession, mapTask } from '../db/mappers.js';
-import { createBranchFrom, getDiff, mergeBranch } from '../services/git/workspace-git.js';
+import { createBranchFrom, getDiff, mergeBranch, pushBranch } from '../services/git/workspace-git.js';
+import { getGitProvider } from '../services/git/registry.js';
+import { GitConnectionService } from '../services/git/connection-service.js';
+
+/**
+ * Read a git_connections row and return the plaintext access token paired
+ * with the row's metadata. Returns null when the connection is gone.
+ */
+async function getGitConnection(
+  pg: { query: <T = unknown>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
+  id: string,
+): Promise<{ accessToken: string; provider: string } | null> {
+  const svc = new GitConnectionService(pg as unknown as import('pg').Pool);
+  const conn = await svc.getById(id);
+  if (!conn) return null;
+  const token = await svc.getAccessToken(id);
+  if (!token) return null;
+  return { accessToken: token, provider: conn.provider };
+}
+
+/**
+ * Extract owner/repo from an HTTPS git remote URL. Handles GitHub URLs with
+ * or without the trailing `.git`.
+ *   https://github.com/owner/repo.git → "owner/repo"
+ *   https://github.com/owner/repo     → "owner/repo"
+ */
+function extractFullName(remoteUrl: string): string | null {
+  const m = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  if (!m) return null;
+  return `${m[1]}/${m[2]}`;
+}
+
+/**
+ * Build the PR body for a branch chat → human-readable summary so reviewers
+ * understand what scope the agent worked under.
+ */
+function buildPrBody(session: ReturnType<typeof mapSession>): string {
+  const lines = [
+    `Opened from Agent Orchestrator branch chat \`${session.id}\`.`,
+    '',
+  ];
+  if (session.scopeGlobs && session.scopeGlobs.length > 0) {
+    lines.push('**Scope:**');
+    for (const g of session.scopeGlobs) lines.push(`- \`${g}\``);
+  }
+  return lines.join('\n');
+}
 
 const createSessionSchema = z.object({
   projectId: z.string().uuid(),
@@ -459,13 +505,80 @@ Please now produce the execution plan (no further clarification needed).`;
     },
   );
 
+  // ── PATCH /api/sessions/:id ──────────────────────────────────────────────────
+  // Update mutable fields of a session. Right now this only covers branch
+  // chats: name + scope_globs (the focus globs the agent worker injects into
+  // every task's system prompt). Main chats reject the call — they have no
+  // mutable surface today and we want to keep this endpoint narrow.
+  //
+  // Why a partial update endpoint instead of just updating scope_globs:
+  // we already foresee adding `merged_at`-clear (re-open a branch chat) and
+  // `branch_name` rename, so a generic PATCH is cleaner than three siblings.
+  fastify.patch<{ Params: { id: string } }>(
+    '/api/sessions/:id',
+    async (request, reply) => {
+      const body = z.object({
+        name:        z.string().min(1).max(120).nullable().optional(),
+        scopeGlobs:  z.array(z.string().min(1).max(200)).max(50).optional(),
+      }).parse(request.body);
+
+      // Branch chats always have UUID ids (Postgres uuid generated). The
+      // legacy `bootstrap` row uses a TEXT id and is always a main chat,
+      // so reject anything that isn't a UUID up front to avoid the
+      // `invalid input syntax for type uuid` 500 from Postgres.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!UUID_RE.test(request.params.id)) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+
+      const { rows: [row] } = await fastify.pg.query(
+        'SELECT * FROM sessions WHERE id = $1',
+        [request.params.id],
+      );
+      if (!row) return reply.status(404).send({ error: 'Session not found' });
+      const session = mapSession(row as Record<string, unknown>);
+      if (session.kind !== 'branch') {
+        return reply.status(400).send({ error: 'Only branch chats can be edited' });
+      }
+
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      let i = 1;
+      if (body.name !== undefined) {
+        sets.push(`name = $${i++}`);
+        params.push(body.name);
+      }
+      if (body.scopeGlobs !== undefined) {
+        sets.push(`scope_globs = $${i++}::jsonb`);
+        params.push(JSON.stringify(body.scopeGlobs));
+      }
+      if (sets.length === 0) return reply.send({ session });
+
+      sets.push('updated_at = NOW()');
+      params.push(request.params.id);
+      const { rows: [updated] } = await fastify.pg.query(
+        `UPDATE sessions SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+        params,
+      );
+      return reply.send({ session: mapSession(updated as Record<string, unknown>) });
+    },
+  );
+
   // ── POST /api/sessions/:id/merge ─────────────────────────────────────────────
-  // Merges this branch chat's git branch into its parent's branch (--no-ff)
-  // and marks the session as merged. Returns the merge commit SHA.
-  // The session row stays — UI can keep showing it as "merged" in the sidebar.
-  fastify.post<{ Params: { id: string } }>(
+  // Default mode: merges this branch chat's git branch into its parent's
+  // branch (--no-ff) locally and marks the session as merged.
+  //
+  // PR mode (body { createPullRequest: true }): pushes the branch to origin
+  // and opens a Pull Request via the GitHub provider instead of merging
+  // locally. The session is NOT marked merged in this case — that happens
+  // when the PR itself is merged on the provider (out of scope here).
+  // Falls back with a clear error if the project has no GitHub remote.
+  fastify.post<{ Params: { id: string }; Body: { createPullRequest?: boolean } }>(
     '/api/sessions/:id/merge',
     async (request, reply) => {
+      const body = request.body ?? {};
+      const wantsPR = body.createPullRequest === true;
+
       const { rows: [row] } = await fastify.pg.query(
         'SELECT * FROM sessions WHERE id = $1',
         [request.params.id],
@@ -510,6 +623,87 @@ Please now produce the execution plan (no further clarification needed).`;
       }
       if (!effectiveTarget) {
         return reply.status(500).send({ error: 'Could not determine target branch for merge' });
+      }
+
+      // ── PR mode ────────────────────────────────────────────────────────────
+      // Push the branch to origin and open a Pull Request via the provider's
+      // API. We don't mark the session merged here — that happens when the PR
+      // is actually merged on the remote (out of scope for this endpoint).
+      if (wantsPR) {
+        // Resolve project_repository → git_connection → provider+token.
+        const { rows: [repoLink] } = await fastify.pg.query<{
+          provider:               string;
+          remote_url:             string;
+          git_connection_id:      string;
+        }>(
+          `SELECT provider, remote_url, git_connection_id
+             FROM project_repositories
+            WHERE project_id = $1
+            LIMIT 1`,
+          [session.projectId],
+        );
+        if (!repoLink) {
+          return reply.status(400).send({
+            error: 'Project has no git remote — fall back to local merge',
+          });
+        }
+
+        const provider = getGitProvider(repoLink.provider as 'github' | 'gitlab' | 'bitbucket');
+        if (!provider?.createPullRequest) {
+          return reply.status(400).send({
+            error: `PR creation is not supported for ${repoLink.provider} yet — fall back to local merge`,
+          });
+        }
+
+        const conn = await getGitConnection(fastify.pg, repoLink.git_connection_id);
+        if (!conn) {
+          return reply.status(400).send({ error: 'Git connection not found or revoked' });
+        }
+
+        try {
+          // 1) Push the branch to origin (uses fresh authenticated URL).
+          //    We need a GitRepo-shape to build the URL — the relevant fields
+          //    are cloneUrl + fullName, both derivable from project_repositories.
+          const cloneUrl = repoLink.remote_url;
+          const fullName = extractFullName(cloneUrl);
+          if (!fullName) {
+            return reply.status(500).send({
+              error: `Cannot derive owner/repo from remote URL ${cloneUrl}`,
+            });
+          }
+          const authedUrl = provider.authenticatedCloneUrl(conn.accessToken, {
+            id: '', name: '', fullName, description: null, private: true,
+            defaultBranch: effectiveTarget, htmlUrl: '', cloneUrl, sshUrl: null,
+            updatedAt: new Date().toISOString(),
+          });
+          await pushBranch({
+            workspaceDir:     projectRoot,
+            branch:           session.branchName,
+            authenticatedUrl: authedUrl,
+          });
+
+          // 2) Open the PR.
+          const pr = await provider.createPullRequest(conn.accessToken, {
+            fullName,
+            head:  session.branchName,
+            base:  effectiveTarget,
+            title: session.name
+              ? `Branch chat: ${session.name}`
+              : `Branch chat ${session.id.slice(0, 8)}`,
+            body:  buildPrBody(session),
+          });
+          return reply.send({
+            merged:        false,
+            pullRequest:   { number: pr.number, htmlUrl: pr.htmlUrl, state: pr.state },
+            targetBranch:  effectiveTarget,
+            sourceBranch:  session.branchName,
+          });
+        } catch (err) {
+          return reply.status(502).send({
+            error:  'Failed to push branch and open PR',
+            detail: (err as Error).message,
+          });
+        }
       }
 
       try {

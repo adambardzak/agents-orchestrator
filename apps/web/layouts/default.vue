@@ -289,6 +289,35 @@
         </div>
       </header>
 
+      <!--
+        KB scope mismatch warning — when the user has selected "Workspace KB"
+        but no active organization is set, no documents will load (org-scoped
+        queries need an org id) and KB writes from /settings/knowledge will
+        fail with a 400. We surface this loudly so users don't think the KB
+        is broken; the fix is either picking a workspace or switching back
+        to "My KB".
+      -->
+      <div
+        v-if="kbScope === 'org' && !auth.activeOrgId.value"
+        class="flex items-center justify-between px-4 py-2 text-xs font-medium border-b border-border shrink-0 bg-pending-bg text-pending border-pending/30"
+      >
+        <div class="flex items-center gap-2">
+          <UIcon name="i-ph-warning-light" class="w-4 h-4" />
+          <span>
+            KB scope is set to <strong>Workspace</strong> but no workspace is
+            active. Pick a workspace from the top-left switcher, or switch the
+            KB scope back to <strong>My KB</strong>.
+          </span>
+        </div>
+        <button
+          type="button"
+          class="underline hover:no-underline"
+          @click="setKbScope('user')"
+        >
+          Switch to My KB
+        </button>
+      </div>
+
       <!-- Budget alert banners -->
       <div
         v-for="(alert, i) in budgetAlerts"

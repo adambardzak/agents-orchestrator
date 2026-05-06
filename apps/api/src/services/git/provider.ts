@@ -51,6 +51,25 @@ export interface CreateRepoOptions {
   autoInit?: boolean;
 }
 
+export interface CreatePullRequestOptions {
+  /** owner/repo (or namespace/repo). Comes from GitRepo.fullName. */
+  fullName: string;
+  /** Branch on the source repo to merge from. */
+  head: string;
+  /** Branch to merge into (usually `main`). */
+  base: string;
+  title: string;
+  body?: string;
+  /** Mark the PR as draft. Default false. */
+  draft?: boolean;
+}
+
+export interface PullRequestRef {
+  number: number;
+  htmlUrl: string;
+  state: 'open' | 'closed' | 'merged';
+}
+
 export interface GitProvider {
   readonly id: GitProviderId;
   readonly displayName: string;
@@ -69,6 +88,13 @@ export interface GitProvider {
 
   /** Create a new remote repository on the provider. */
   createRepo(accessToken: string, opts: CreateRepoOptions): Promise<GitRepo>;
+
+  /**
+   * Create a Pull/Merge Request on the provider. Optional — providers that
+   * don't implement it should be left undefined; callers must check before
+   * invoking and fall back to local merge with a clear UI message.
+   */
+  createPullRequest?(accessToken: string, opts: CreatePullRequestOptions): Promise<PullRequestRef>;
 
   /**
    * Build an authenticated HTTPS clone URL for use with `git clone` / `git push`.

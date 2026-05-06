@@ -159,6 +159,22 @@ export function useOrchestratorApi() {
   }
 
   /**
+   * Patch a branch chat's mutable fields (name, scope globs). Main chats
+   * reject this call — branch chats only.
+   */
+  async function updateSession(sessionId: string, patch: {
+    name?:       string | null;
+    scopeGlobs?: string[];
+  }): Promise<{ session: import('@agent-orchestrator/shared').Session }> {
+    const res = await req(`/api/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body:   JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+    return res.json() as Promise<{ session: import('@agent-orchestrator/shared').Session }>;
+  }
+
+  /**
    * Returns the unified diff of a branch chat's git branch vs. its parent.
    * Used by the merge prompt to show the user what they're about to accept.
    */
@@ -177,21 +193,29 @@ export function useOrchestratorApi() {
    * server returns 409 with a `detail` string — surface it to the user so
    * they can resolve in the workspace.
    */
-  async function mergeBranchChat(sessionId: string): Promise<{
+  async function mergeBranchChat(
+    sessionId: string,
+    opts: { createPullRequest?: boolean } = {},
+  ): Promise<{
     merged:           boolean;
-    sha:              string | null;
-    alreadyUpToDate:  boolean;
+    sha?:             string | null;
+    alreadyUpToDate?: boolean;
     targetBranch:     string;
     sourceBranch:     string;
+    pullRequest?:     { number: number; htmlUrl: string; state: string };
   }> {
-    const res = await req(`/api/sessions/${sessionId}/merge`, { method: 'POST', body: '{}' });
+    const res = await req(`/api/sessions/${sessionId}/merge`, {
+      method: 'POST',
+      body:   JSON.stringify({ createPullRequest: opts.createPullRequest === true }),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({})) as { error?: string; detail?: string };
       throw new Error(err.detail ? `${err.error}: ${err.detail}` : (err.error ?? `HTTP ${res.status}`));
     }
     return res.json() as Promise<{
-      merged: boolean; sha: string | null; alreadyUpToDate: boolean;
+      merged: boolean; sha?: string | null; alreadyUpToDate?: boolean;
       targetBranch: string; sourceBranch: string;
+      pullRequest?: { number: number; htmlUrl: string; state: string };
     }>;
   }
 
@@ -387,6 +411,7 @@ export function useOrchestratorApi() {
     listSessions,
     getSession,
     createBranchChat,
+    updateSession,
     getSessionDiff,
     mergeBranchChat,
     cancelSession,

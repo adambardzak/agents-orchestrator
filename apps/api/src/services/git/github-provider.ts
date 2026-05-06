@@ -17,6 +17,8 @@ import {
   type GitRepo,
   type OAuthTokens,
   type CreateRepoOptions,
+  type CreatePullRequestOptions,
+  type PullRequestRef,
 } from './provider.js';
 
 export interface GitHubProviderConfig {
@@ -116,6 +118,33 @@ export class GitHubProvider implements GitProvider {
       'https://',
       `https://x-access-token:${encodeURIComponent(accessToken)}@`,
     );
+  }
+
+  async createPullRequest(
+    accessToken: string,
+    opts: CreatePullRequestOptions,
+  ): Promise<PullRequestRef> {
+    const oct = new Octokit({ auth: accessToken });
+    const [owner, repo] = opts.fullName.split('/', 2);
+    if (!owner || !repo) {
+      throw new Error(`Invalid repo fullName "${opts.fullName}" — expected owner/repo`);
+    }
+    const { data } = await oct.pulls.create({
+      owner,
+      repo,
+      head:  opts.head,
+      base:  opts.base,
+      title: opts.title,
+      body:  opts.body,
+      draft: opts.draft ?? false,
+    });
+    return {
+      number:  data.number,
+      htmlUrl: data.html_url,
+      state:   data.state === 'closed'
+        ? (data.merged_at ? 'merged' : 'closed')
+        : 'open',
+    };
   }
 
   private mapRepo(r: {

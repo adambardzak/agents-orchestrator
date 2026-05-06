@@ -10,7 +10,9 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench:seed": "tsx --env-file=.env scripts/seed-bench.ts",
+    "bench:context": "tsx scripts/benchmark-context.ts"
   },
   "dependencies": {
     "@agent-orchestrator/shared": "workspace:*",

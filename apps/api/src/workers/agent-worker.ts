@@ -370,21 +370,34 @@ export class AgentWorker {
       }
     }
 
-    // ── KB: retrieve org-level knowledge base context ────────────────────────
-    // Org KB applies to all agent types (including document/qa/orchestrator —
-    // architectural docs and conventions matter to planners too).
+    // ── KB: retrieve workspace + project-owner personal KB ───────────────────
+    // Strategy: search both the project's organization KB and the project
+    // owner's personal KB simultaneously, then re-rank by relevance. Personal
+    // notes from the owner often contain pre-org tribal knowledge worth
+    // surfacing alongside official workspace docs.
     try {
-      const { rows } = await this.db.query<{ organization_id: string | null }>(
-        `SELECT organization_id FROM projects WHERE id = $1`,
+      const { rows } = await this.db.query<{
+        organization_id: string | null;
+        created_by:      string | null;
+      }>(
+        `SELECT organization_id, created_by FROM projects WHERE id = $1`,
         [task.projectId],
       );
       const orgId = rows[0]?.organization_id;
-      if (orgId) {
-        const kbHits = await this.knowledge.retrieveForOrg(orgId, task.prompt, 5);
+      const ownerId = rows[0]?.created_by;
+      const scopes: import('../services/knowledge/knowledge-service.js').KbScope[] = [];
+      if (orgId)   scopes.push({ kind: 'org',  organizationId: orgId });
+      if (ownerId) scopes.push({ kind: 'user', userId: ownerId });
+
+      if (scopes.length > 0) {
+        const kbHits = await this.knowledge.retrieveForScopes(scopes, task.prompt, 5);
         if (kbHits.length > 0) {
           const kbContext = this.knowledge.formatAsContext(kbHits);
           resolvedExtraContext = (resolvedExtraContext ?? '') + '\n\n' + kbContext;
-          this.logger.info({ taskId: task.id, hits: kbHits.length }, 'KB context injected');
+          this.logger.info(
+            { taskId: task.id, hits: kbHits.length, scopes: scopes.map((s) => s.kind) },
+            'KB context injected',
+          );
         }
       }
     } catch (err) {

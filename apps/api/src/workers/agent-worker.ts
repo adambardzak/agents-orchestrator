@@ -23,6 +23,7 @@ import { commitAll, pushBranch } from '../services/git/workspace-git.js';
 import { AIProviderService } from '../services/ai-providers/provider-service.js';
 import { KnowledgeService } from '../services/knowledge/knowledge-service.js';
 import { SkillRelevanceFilter } from '../services/skills/skill-relevance.js';
+import { ContextBudget } from '../services/telemetry/context-budget.js';
 import { QaRunner } from '../services/qa/qa-runner.js';
 import { resolveProviderModel } from '../services/ai-providers/complexity-map.js';
 import type { ProviderOverride } from '../services/model-router/router.js';
@@ -343,6 +344,8 @@ export class AgentWorker {
 
     // ── Inject frontend-rules.md for Frontend agent (Fáze 1 quality layer) ──
     let resolvedExtraContext = extraContext;
+    const budget = new ContextBudget();
+    if (extraContext) budget.add('caller-extra', extraContext.length);
     if (task.agentType === 'frontend') {
       const frontendRulesPath = nodePath.join(workspaceDir, 'design-system', 'frontend-rules.md');
       try {
@@ -362,6 +365,7 @@ export class AgentWorker {
         }
         const rulesBlock = `\n\n## Project Frontend Rules (from design-system/frontend-rules.md)\n\n${rules}`;
         resolvedExtraContext = (resolvedExtraContext ?? '') + rulesBlock;
+        budget.add('frontend-rules', rulesBlock.length, { truncated, originalChars: rulesRaw.length });
         this.logger.info(
           { taskId: task.id, chars: rules.length, truncated },
           'Injected frontend-rules.md into Frontend agent context',
@@ -384,7 +388,10 @@ export class AgentWorker {
         if (ragChunks.length > 0) {
           const ragContext = this.ragService.formatAsContext(ragChunks);
           resolvedExtraContext = (resolvedExtraContext ?? '') + '\n\n' + ragContext;
+          budget.add('rag', ragContext.length, { hits: ragChunks.length, requested: 5 });
           this.logger.info({ taskId: task.id, chunks: ragChunks.length }, 'RAG context injected');
+        } else {
+          budget.add('rag', 0, { hits: 0, requested: 5, allFiltered: true });
         }
       } catch (err) {
         this.logger.warn({ err, taskId: task.id }, 'RAG retrieval failed, continuing without context');
@@ -415,10 +422,13 @@ export class AgentWorker {
         if (kbHits.length > 0) {
           const kbContext = this.knowledge.formatAsContext(kbHits);
           resolvedExtraContext = (resolvedExtraContext ?? '') + '\n\n' + kbContext;
+          budget.add('kb', kbContext.length, { hits: kbHits.length, requested: 5, scopes: scopes.map((s) => s.kind) });
           this.logger.info(
             { taskId: task.id, hits: kbHits.length, scopes: scopes.map((s) => s.kind) },
             'KB context injected',
           );
+        } else {
+          budget.add('kb', 0, { hits: 0, requested: 5, scopes: scopes.map((s) => s.kind), allFiltered: true });
         }
       }
     } catch (err) {
@@ -457,6 +467,7 @@ export class AgentWorker {
             'mention it explicitly in your final summary.',
           ].join('\n');
           resolvedExtraContext = (resolvedExtraContext ?? '') + '\n' + scopeBlock;
+          budget.add('branch-scope', scopeBlock.length, { globs: globs.length });
           this.logger.info(
             { taskId: task.id, sessionId: task.sessionId, globCount: globs.length },
             'Branch chat scope injected into agent context',
@@ -519,10 +530,21 @@ export class AgentWorker {
             'Filtered skill list for agent spawn',
           );
         }
+        // Track skill knowledge size delta for the budget summary
+        const skillsChars = spawnAgentConfig.skills.reduce((n, s) => n + s.knowledgeBlock.length + s.name.length + 16, 0);
+        budget.add('skills', skillsChars, { kept: spawnAgentConfig.skills.length, of: agentConfig.skills.length });
       } catch (err) {
         this.logger.warn({ err, taskId: task.id }, 'skill-filter threw, falling back to full skill list');
       }
     }
+
+    // ── Emit context-budget summary log (one structured line per spawn) ─────
+    // Greppable for "context-budget" to audit prompt sizes per task/agent.
+    budget.emit(this.logger, {
+      taskId:                task.id,
+      agentType:             task.agentType,
+      baseSystemPromptChars: spawnAgentConfig.systemPrompt.length,
+    });
 
     await new Promise<void>((resolve, reject) => {
       this.processManager

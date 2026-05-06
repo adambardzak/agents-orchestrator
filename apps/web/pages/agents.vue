@@ -186,39 +186,94 @@
             <h3 class="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">Skills</h3>
             <p class="text-xs text-text-muted mb-3">
               Skills inject specialized knowledge blocks + rules into the agent's system prompt at spawn time.
+              Manage them in <NuxtLink to="/settings/skills" class="text-accent hover:underline">Settings → Skills</NuxtLink>.
             </p>
             <div v-if="skillsLoading" class="text-xs text-text-muted">Loading skills...</div>
             <div v-else-if="availableSkills.length === 0" class="text-xs text-text-muted italic border border-dashed border-border rounded-md p-4 text-center">
               No skills available. Create some in
               <NuxtLink to="/settings/skills" class="text-accent hover:underline">Settings → Skills</NuxtLink>.
             </div>
-            <div v-else class="space-y-2">
-              <button
-                v-for="skill in availableSkills"
-                :key="skill.id"
-                :disabled="isReadOnly"
-                class="w-full text-left p-3 rounded-md border transition-colors"
-                :class="isSkillEnabled(skill.id)
-                  ? 'border-accent bg-accent/10'
-                  : 'border-border hover:border-border-strong hover:bg-surface-hover'"
-                @click="toggleSkill(skill)"
-              >
-                <div class="flex items-center justify-between">
-                  <span class="text-sm font-medium" :class="isSkillEnabled(skill.id) ? 'text-accent' : 'text-text-primary'">
-                    {{ skill.name }}
-                  </span>
-                  <span v-if="isSkillEnabled(skill.id)" class="text-xs text-accent">✓ enabled</span>
+            <template v-else>
+              <!-- Category filter chips -->
+              <div v-if="skillCategoriesPresent.length > 1" class="flex flex-wrap gap-1.5 mb-3">
+                <button
+                  type="button"
+                  class="px-2.5 py-0.5 text-xs rounded-full border transition"
+                  :class="skillCategoryFilter === null
+                    ? 'bg-accent text-white border-accent'
+                    : 'border-border text-text-muted hover:bg-surface-hover'"
+                  @click="skillCategoryFilter = null"
+                >
+                  All ({{ availableSkills.length }})
+                </button>
+                <button
+                  v-for="cat in skillCategoriesPresent"
+                  :key="cat"
+                  type="button"
+                  class="px-2.5 py-0.5 text-xs rounded-full border transition capitalize flex items-center gap-1"
+                  :class="skillCategoryFilter === cat
+                    ? 'bg-accent text-white border-accent'
+                    : 'border-border text-text-muted hover:bg-surface-hover'"
+                  @click="skillCategoryFilter = cat"
+                >
+                  <UIcon :name="skillCategoryIcon(cat)" class="w-3 h-3" />
+                  {{ skillCategoryLabel(cat) }}
+                  ({{ countSkillsByCategory(cat) }})
+                </button>
+              </div>
+
+              <div class="space-y-2">
+                <button
+                  v-for="skill in filteredAvailableSkills"
+                  :key="skill.id"
+                  :disabled="isReadOnly"
+                  class="w-full text-left p-3 rounded-md border transition-colors"
+                  :class="isSkillEnabled(skill.id)
+                    ? 'border-accent bg-accent/10'
+                    : 'border-border hover:border-border-strong hover:bg-surface-hover'"
+                  @click="toggleSkill(skill)"
+                >
+                  <div class="flex items-start gap-2.5">
+                    <UIcon
+                      :name="skill.icon || 'i-ph-lightbulb-light'"
+                      class="w-4 h-4 mt-0.5 shrink-0"
+                      :class="isSkillEnabled(skill.id) ? 'text-accent' : 'text-text-muted'"
+                    />
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span
+                          class="text-sm font-medium"
+                          :class="isSkillEnabled(skill.id) ? 'text-accent' : 'text-text-primary'"
+                        >
+                          {{ skill.name }}
+                        </span>
+                        <span
+                          v-if="skill.category"
+                          class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-text-muted capitalize"
+                        >
+                          {{ skillCategoryLabel(skill.category) }}
+                        </span>
+                        <span v-if="isSkillEnabled(skill.id)" class="text-xs text-accent ml-auto">✓ enabled</span>
+                      </div>
+                      <p class="text-xs text-text-muted mt-0.5">{{ skill.description }}</p>
+                      <div v-if="skill.requiredMcpServers.length" class="flex gap-1 mt-1.5 flex-wrap">
+                        <span
+                          v-for="mcp in skill.requiredMcpServers"
+                          :key="mcp"
+                          class="text-xs bg-surface px-1.5 py-0.5 rounded font-mono text-text-muted"
+                        >{{ mcp }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+                <div
+                  v-if="filteredAvailableSkills.length === 0"
+                  class="text-xs text-text-muted italic text-center py-4"
+                >
+                  No skills in this category.
                 </div>
-                <p class="text-xs text-text-muted mt-0.5">{{ skill.description }}</p>
-                <div v-if="skill.requiredMcpServers.length" class="flex gap-1 mt-1.5">
-                  <span
-                    v-for="mcp in skill.requiredMcpServers"
-                    :key="mcp"
-                    class="text-xs bg-surface px-1.5 py-0.5 rounded font-mono text-text-muted"
-                  >{{ mcp }}</span>
-                </div>
-              </button>
-            </div>
+              </div>
+            </template>
           </section>
 
           <!-- MCP Servers -->
@@ -324,6 +379,50 @@ function mcpServersByCategory(categoryId: string) {
 // ── Skills ─────────────────────────────────────────────────────────────────
 const availableSkills = ref<AgentSkill[]>([]);
 const skillsLoading = ref(false);
+const skillCategoryFilter = ref<string | null>(null);
+
+const SKILL_CATEGORY_LABELS: Record<string, string> = {
+  frontend: 'Frontend',
+  backend: 'Backend',
+  database: 'Database',
+  devops: 'DevOps',
+  testing: 'Testing',
+  security: 'Security',
+  'ai-llm': 'AI / LLM',
+  seo: 'SEO',
+  tooling: 'Tooling',
+  other: 'Other',
+};
+const SKILL_CATEGORY_ICONS: Record<string, string> = {
+  frontend: 'i-ph-browser-light',
+  backend: 'i-ph-server-light',
+  database: 'i-ph-database-light',
+  devops: 'i-ph-cloud-light',
+  testing: 'i-ph-test-tube-light',
+  security: 'i-ph-shield-check-light',
+  'ai-llm': 'i-ph-robot-light',
+  seo: 'i-ph-magnifying-glass-light',
+  tooling: 'i-ph-wrench-light',
+  other: 'i-ph-tag-light',
+};
+function skillCategoryLabel(cat: string): string {
+  return SKILL_CATEGORY_LABELS[cat] ?? cat;
+}
+function skillCategoryIcon(cat: string): string {
+  return SKILL_CATEGORY_ICONS[cat] ?? 'i-ph-tag-light';
+}
+function countSkillsByCategory(cat: string): number {
+  return availableSkills.value.filter((s) => (s.category ?? 'other') === cat).length;
+}
+const skillCategoriesPresent = computed<string[]>(() => {
+  const order = ['frontend', 'backend', 'database', 'devops', 'testing', 'security', 'ai-llm', 'seo', 'tooling', 'other'];
+  const present = new Set(availableSkills.value.map((s) => s.category ?? 'other'));
+  return order.filter((c) => present.has(c));
+});
+const filteredAvailableSkills = computed<AgentSkill[]>(() => {
+  if (!skillCategoryFilter.value) return availableSkills.value;
+  return availableSkills.value.filter((s) => (s.category ?? 'other') === skillCategoryFilter.value);
+});
 
 onMounted(async () => {
   skillsLoading.value = true;

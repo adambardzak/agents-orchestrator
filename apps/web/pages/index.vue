@@ -97,12 +97,12 @@
             :plan="(msg.plan || tryParsePlan(msg.content))!"
           />
 
-          <!-- Assistant: plain text bubble -->
+          <!-- Assistant: plain text bubble (markdown rendered) -->
           <div
             v-else
             class="max-w-2xl rounded-md px-4 py-3 bg-surface-elevated border border-border"
           >
-            <p class="text-sm whitespace-pre-wrap">{{ msg.content }}</p>
+            <div class="prose-chat text-sm" v-html="renderMarkdown(msg.content)" />
           </div>
         </div>
 
@@ -258,6 +258,9 @@ const sessionStore = useSessionStore();
 const projectStore = useProjectStore();
 // reactive() unwraps all Refs inside composable so template can use apiStore.githubToken directly
 const apiStore = reactive(useOrchestratorApi());
+
+// Markdown rendering for assistant chat bubbles (sanitized via DOMPurify).
+const { renderMarkdown } = useMarkdown();
 
 // messages live in the store so they survive navigation away and back
 const messages = computed(() => sessionStore.messages);
@@ -591,3 +594,100 @@ async function deleteSession(e: Event, sessionId: string) {
   }
 }
 </script>
+
+<style scoped>
+/* Markdown bubble styling — keeps the chat look consistent with the rest of
+   the UI (no heavy "prose" defaults from typography plugins). */
+.prose-chat :deep(h1),
+.prose-chat :deep(h2),
+.prose-chat :deep(h3),
+.prose-chat :deep(h4) {
+  font-weight: 600;
+  margin: 0.75em 0 0.35em;
+  line-height: 1.25;
+}
+.prose-chat :deep(h1) { font-size: 1.15em; }
+.prose-chat :deep(h2) { font-size: 1.08em; }
+.prose-chat :deep(h3) { font-size: 1em; }
+.prose-chat :deep(h4) { font-size: 0.95em; color: var(--color-text-secondary, #a3a3a3); }
+
+.prose-chat :deep(p) {
+  margin: 0.4em 0;
+  line-height: 1.55;
+}
+.prose-chat :deep(p:first-child) { margin-top: 0; }
+.prose-chat :deep(p:last-child)  { margin-bottom: 0; }
+
+.prose-chat :deep(ul),
+.prose-chat :deep(ol) {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.prose-chat :deep(ul) { list-style: disc; }
+.prose-chat :deep(ol) { list-style: decimal; }
+.prose-chat :deep(li) { margin: 0.15em 0; }
+.prose-chat :deep(li > ul),
+.prose-chat :deep(li > ol) { margin: 0.15em 0; }
+
+.prose-chat :deep(strong) { font-weight: 600; }
+.prose-chat :deep(em)     { font-style: italic; }
+
+.prose-chat :deep(code) {
+  background: rgba(255, 255, 255, 0.07);
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+}
+.prose-chat :deep(pre) {
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  border: 1px solid var(--color-border, #2a2a2a);
+}
+.prose-chat :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.prose-chat :deep(blockquote) {
+  border-left: 3px solid var(--color-border, #2a2a2a);
+  padding-left: 0.85em;
+  margin: 0.5em 0;
+  color: var(--color-text-secondary, #a3a3a3);
+}
+
+.prose-chat :deep(a) {
+  color: var(--color-accent, #6366f1);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.prose-chat :deep(a:hover) { text-decoration-thickness: 2px; }
+
+.prose-chat :deep(hr) {
+  border: 0;
+  border-top: 1px solid var(--color-border, #2a2a2a);
+  margin: 0.75em 0;
+}
+
+.prose-chat :deep(table) {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.9em;
+}
+.prose-chat :deep(th),
+.prose-chat :deep(td) {
+  border: 1px solid var(--color-border, #2a2a2a);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.prose-chat :deep(th) {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+</style>

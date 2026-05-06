@@ -82,6 +82,139 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
 }
 
+/**
+ * Try to extract a human-readable preview from a raw agent message.
+ * Agents often emit fenced JSON (```json … ```) with `analysis` (orchestrator)
+ * or `tickets: [{ title }]` (planners). Falls back to the raw text.
+ */
+function humanizeAgentMessage(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+
+  // Strip markdown JSON fences: ```json ... ```
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  let body = fenced ? fenced[1] : trimmed;
+  body = (body ?? '').trim();
+
+  // Find the first JSON object substring if present
+  const start = body.indexOf('{');
+  const end   = body.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    const candidate = body.slice(start, end + 1);
+    try {
+      const obj = JSON.parse(candidate) as Record<string, unknown>;
+
+      // Orchestrator-style: { analysis: "…", tasks: [...] }
+      if (typeof obj['analysis'] === 'string' && obj['analysis']) {
+        const analysis = obj['analysis'] as string;
+        const tasks    = Array.isArray(obj['tasks']) ? (obj['tasks'] as unknown[]).length : 0;
+        return tasks > 0 ? `${analysis} · ${tasks} task${tasks === 1 ? '' : 's'}` : analysis;
+      }
+
+      // Planner-style: { tickets: [{ title, ... }, …] }
+      if (Array.isArray(obj['tickets'])) {
+        const tickets = obj['tickets'] as Array<Record<string, unknown>>;
+        const first   = tickets[0];
+        const firstTitle = first && typeof first['title'] === 'string' ? (first['title'] as string) : '';
+        if (firstTitle) {
+          return tickets.length > 1
+            ? `${firstTitle} (+${tickets.length - 1} more)`
+            : firstTitle;
+        }
+        return `${tickets.length} ticket${tickets.length === 1 ? '' : 's'}`;
+      }
+
+      // Generic fallbacks: summary / title / description
+      for (const key of ['summary', 'title', 'description', 'message']) {
+        const v = obj[key];
+        if (typeof v === 'string' && v) return v;
+      }
+    } catch {
+      // not valid JSON — fall through
+    }
+  }
+
+  return body;
+}
+
+/**
+ * Build a short, human-readable description of a tool invocation. Falls back
+ * to the bare tool name when no useful context is available.
+ *
+ * Different agents/tools name parameters differently — `bash` uses `command`,
+ * `read`/`write`/`edit` use `path`/`file_path`, `glob`/`grep` use `pattern`,
+ * `webfetch` uses `url`, etc. We try the most informative field per tool.
+ */
+function describeToolCall(name: string, input: Record<string, unknown>): string {
+  const lower = name.toLowerCase();
+  const path  = (input['path'] ?? input['file_path'] ?? input['filename']) as string | undefined;
+  const cmd   = input['command'] as string | undefined;
+  const ptn   = input['pattern'] as string | undefined;
+  const url   = input['url']     as string | undefined;
+  const desc  = input['description'] as string | undefined;
+  const todos = input['todos'] as Array<unknown> | undefined;
+
+  // Bash — show the actual command (or its description if very long)
+  if (lower === 'bash') {
+    const text = (cmd && typeof cmd === 'string')
+      ? cmd
+      : (typeof desc === 'string' ? desc : '');
+    return text ? `$ ${truncate(stripNewlines(text), 60)}` : 'bash';
+  }
+
+  // Edit / Write / Read / View — show the file path
+  if (['edit', 'write', 'read', 'view', 'open', 'multiedit', 'str_replace'].includes(lower)) {
+    return path ? `${name}: ${truncate(path, 55)}` : name;
+  }
+
+  // Glob / Grep — show the search pattern (and optional path)
+  if (['glob', 'grep', 'search', 'find'].includes(lower)) {
+    if (ptn) {
+      const where = path ? ` in ${truncate(path, 25)}` : '';
+      return `${name}: ${truncate(ptn, 40)}${where}`;
+    }
+    return name;
+  }
+
+  // WebFetch / WebSearch — show URL or query
+  if (lower === 'webfetch' || lower === 'fetch') {
+    return url ? `fetch: ${truncate(url, 55)}` : 'fetch';
+  }
+  if (lower === 'websearch' || lower === 'search_web') {
+    const q = input['query'] as string | undefined;
+    return q ? `search: ${truncate(q, 55)}` : 'search';
+  }
+
+  // TodoWrite — count
+  if (lower === 'todowrite' || lower === 'todo_write') {
+    const n = Array.isArray(todos) ? todos.length : 0;
+    return n > 0 ? `todo: ${n} item${n === 1 ? '' : 's'}` : 'todo';
+  }
+
+  // Task / sub-agent dispatch
+  if (lower === 'task' || lower === 'dispatch') {
+    const subDesc = (input['description'] ?? input['prompt']) as string | undefined;
+    return subDesc ? `task: ${truncate(stripNewlines(subDesc), 55)}` : 'task';
+  }
+
+  // Generic fallback: prefer path, then command, then any string-valued field.
+  if (path) return `${name}: ${truncate(path, 55)}`;
+  if (cmd)  return `${name}: ${truncate(stripNewlines(cmd), 55)}`;
+  if (typeof desc === 'string' && desc) return `${name}: ${truncate(desc, 55)}`;
+
+  // Last resort — first stringy value in the input.
+  for (const v of Object.values(input)) {
+    if (typeof v === 'string' && v.trim()) {
+      return `${name}: ${truncate(stripNewlines(v), 55)}`;
+    }
+  }
+  return name;
+}
+
+function stripNewlines(s: string): string {
+  return s.replace(/\s*\n+\s*/g, ' ').trim();
+}
+
 function activityLine(task: AgentTask): string {
   const events = props.eventsByTask.get(task.id) ?? [];
 
@@ -102,18 +235,22 @@ function activityLine(task: AgentTask): string {
 
   if (task.status === 'completed') {
     const done = [...events].reverse().find((e) => e.type === 'complete');
-    if (done && 'summary' in done && done.summary) return truncate(String(done.summary), 70);
+    if (done && 'summary' in done && done.summary) {
+      return truncate(humanizeAgentMessage(String(done.summary)), 70);
+    }
   }
 
   const lastTool = [...events].reverse().find((e) => e.type === 'tool_use');
-  if (lastTool && 'input' in lastTool && lastTool.input) {
-    const input = lastTool.input as Record<string, unknown>;
-    const path = (input['path'] ?? input['file_path'] ?? input['filename'] ?? '') as string;
-    return path ? `${(lastTool as { name?: string }).name ?? '?'}: ${truncate(path, 50)}` : ((lastTool as { name?: string }).name ?? '');
+  if (lastTool && 'input' in lastTool) {
+    const name  = ((lastTool as { name?: string }).name ?? '?');
+    const input = (lastTool.input ?? {}) as Record<string, unknown>;
+    return describeToolCall(name, input);
   }
 
   const lastMsg = [...events].reverse().find((e) => e.type === 'message');
-  if (lastMsg && 'content' in lastMsg && lastMsg.content) return truncate(String(lastMsg.content), 70);
+  if (lastMsg && 'content' in lastMsg && lastMsg.content) {
+    return truncate(humanizeAgentMessage(String(lastMsg.content)), 70);
+  }
 
   return '';
 }

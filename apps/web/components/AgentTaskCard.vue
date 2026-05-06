@@ -32,15 +32,14 @@
       v-if="lastToolUse"
       class="text-xs text-text-secondary font-mono truncate"
     >
-      <span class="text-text-faint">▸</span> {{ lastToolUse.name }}
-      <span v-if="lastToolUseFile" class="text-text-faint">{{ lastToolUseFile }}</span>
+      <span class="text-text-faint">▸</span> {{ describedToolCall }}
     </div>
 
     <div
       v-else-if="lastMessage"
       class="text-xs text-text-secondary line-clamp-2"
     >
-      {{ lastMessage.content }}
+      {{ humanizedLastMessage }}
     </div>
 
     <!-- Progress bar -->
@@ -200,12 +199,117 @@ const lastToolUseFile = computed(() => {
   return (input['path'] ?? input['file_path'] ?? input['filename'] ?? null) as string | null;
 });
 
+/**
+ * Human-readable description of the most recent tool call.
+ * Falls back to "<tool_name> <file>" when we don't have a friendlier
+ * mapping for the tool. Keeps preview rows readable to non-technical users.
+ */
+const describedToolCall = computed(() => {
+  const tool = lastToolUse.value;
+  if (!tool) return '';
+  const name  = tool.name;
+  const input = tool.input ?? {};
+  const file  = lastToolUseFile.value;
+
+  switch (name) {
+    case 'read':
+    case 'Read':
+      return file ? `Reading ${file}` : 'Reading file';
+    case 'write':
+    case 'Write':
+      return file ? `Writing ${file}` : 'Writing file';
+    case 'edit':
+    case 'Edit':
+      return file ? `Editing ${file}` : 'Editing file';
+    case 'bash':
+    case 'Bash': {
+      const cmd = (input['command'] as string | undefined) ?? '';
+      const first = cmd.split(/\s+/)[0] ?? '';
+      return first ? `Running \`${first}\`` : 'Running command';
+    }
+    case 'grep':
+    case 'Grep': {
+      const pattern = (input['pattern'] as string | undefined) ?? '';
+      return pattern ? `Searching for "${pattern}"` : 'Searching files';
+    }
+    case 'glob':
+    case 'Glob': {
+      const pattern = (input['pattern'] as string | undefined) ?? '';
+      return pattern ? `Finding ${pattern}` : 'Finding files';
+    }
+    case 'webfetch':
+    case 'WebFetch': {
+      const url = (input['url'] as string | undefined) ?? '';
+      try {
+        return url ? `Fetching ${new URL(url).hostname}` : 'Fetching URL';
+      } catch {
+        return 'Fetching URL';
+      }
+    }
+    case 'task':
+    case 'Task':
+      return `Delegating sub-task`;
+    default:
+      return file ? `${name} ${file}` : name;
+  }
+});
+
 const lastMessage = computed(() => {
   const events = [...props.events].reverse();
   return events.find((e) => e.type === 'message') as
     | (Extract<OpencodeEvent, { type: 'message' }> & { timestamp: string })
     | undefined;
 });
+
+const humanizedLastMessage = computed(() => {
+  const raw = lastMessage.value?.content;
+  if (!raw) return '';
+  return humanizeAgentMessage(String(raw));
+});
+
+/**
+ * Try to extract a human-readable preview from a raw agent message.
+ * Agents often emit fenced JSON (```json … ```) with `analysis` (orchestrator)
+ * or `tickets: [{ title }]` (planners). Falls back to the raw text.
+ */
+function humanizeAgentMessage(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  let body = (fenced ? fenced[1] : trimmed) ?? '';
+  body = body.trim();
+
+  const start = body.indexOf('{');
+  const end   = body.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    try {
+      const obj = JSON.parse(body.slice(start, end + 1)) as Record<string, unknown>;
+      if (typeof obj['analysis'] === 'string' && obj['analysis']) {
+        const analysis = obj['analysis'] as string;
+        const tasks    = Array.isArray(obj['tasks']) ? (obj['tasks'] as unknown[]).length : 0;
+        return tasks > 0 ? `${analysis} · ${tasks} task${tasks === 1 ? '' : 's'}` : analysis;
+      }
+      if (Array.isArray(obj['tickets'])) {
+        const tickets = obj['tickets'] as Array<Record<string, unknown>>;
+        const first   = tickets[0];
+        const firstTitle = first && typeof first['title'] === 'string' ? (first['title'] as string) : '';
+        if (firstTitle) {
+          return tickets.length > 1
+            ? `${firstTitle} (+${tickets.length - 1} more)`
+            : firstTitle;
+        }
+        return `${tickets.length} ticket${tickets.length === 1 ? '' : 's'}`;
+      }
+      for (const key of ['summary', 'title', 'description', 'message']) {
+        const v = obj[key];
+        if (typeof v === 'string' && v) return v;
+      }
+    } catch {
+      // not valid JSON
+    }
+  }
+  return body;
+}
 
 function capitalize(s: string) { return s.charAt(0).toUpperCase() + s.slice(1); }
 function formatTokens(n: number): string {

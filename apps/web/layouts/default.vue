@@ -20,7 +20,7 @@
       <div class="px-3 pt-3 pb-2 relative">
         <button
           class="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-hover transition group"
-          @click="orgMenuOpen = !orgMenuOpen"
+          @click.stop="orgMenuOpen = !orgMenuOpen"
         >
           <div class="w-5 h-5 rounded bg-gradient-to-br from-indigo-500/80 to-violet-600/80 flex items-center justify-center text-[10px] font-semibold text-white shrink-0">
             {{ orgInitial }}
@@ -171,7 +171,7 @@
         </button>
         <button
           class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded-md text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
-          @click="userMenuOpen = !userMenuOpen"
+          @click.stop="userMenuOpen = !userMenuOpen"
         >
           <div class="w-4 h-4 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-[9px] font-semibold text-white shrink-0">
             {{ userInitial }}
@@ -352,6 +352,59 @@
         </div>
       </div>
     </div>
+
+    <!-- Create workspace modal -->
+    <Teleport to="body">
+      <div
+        v-if="showCreateWorkspace"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        @click.self="showCreateWorkspace = false"
+        @keydown.esc="showCreateWorkspace = false"
+      >
+        <div
+          class="w-[420px] max-w-[90vw] bg-surface-elevated border border-border-strong rounded-lg shadow-pop overflow-hidden"
+          @click.stop
+        >
+          <div class="px-5 pt-5 pb-3">
+            <h3 class="font-heading font-semibold text-base text-text-primary">Create workspace</h3>
+            <p class="text-xs text-text-faint mt-1">A workspace groups projects, knowledge and team members.</p>
+          </div>
+          <form class="px-5 pb-4 space-y-3" @submit.prevent="submitCreateWorkspace">
+            <div>
+              <label class="block text-xs font-medium text-text-secondary mb-1.5">Name</label>
+              <input
+                ref="newWorkspaceInputRef"
+                v-model="newWorkspaceName"
+                type="text"
+                placeholder="Acme Inc."
+                class="w-full px-3 py-2 text-sm bg-surface border border-border-strong rounded-md focus:outline-none focus:border-accent-primary focus:ring-1 focus:ring-accent-primary/30 transition"
+                :disabled="creatingWorkspace"
+              >
+              <p v-if="newWorkspaceError" class="mt-1.5 text-xs text-red-500">{{ newWorkspaceError }}</p>
+            </div>
+          </form>
+          <div class="flex justify-end gap-2 px-5 py-3 bg-surface border-t border-border">
+            <UButton
+              variant="ghost"
+              size="sm"
+              :disabled="creatingWorkspace"
+              @click="showCreateWorkspace = false"
+            >
+              Cancel
+            </UButton>
+            <UButton
+              variant="primary"
+              size="sm"
+              :loading="creatingWorkspace"
+              :disabled="!newWorkspaceName.trim() || creatingWorkspace"
+              @click="submitCreateWorkspace"
+            >
+              Create
+            </UButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -376,6 +429,13 @@ const colorMode    = useColorMode();
 const stopping     = ref(false);
 const orgMenuOpen  = ref(false);
 const userMenuOpen = ref(false);
+
+// Create workspace modal state
+const showCreateWorkspace  = ref(false);
+const newWorkspaceName     = ref('');
+const newWorkspaceError    = ref<string | null>(null);
+const creatingWorkspace    = ref(false);
+const newWorkspaceInputRef = ref<HTMLInputElement | null>(null);
 
 // Close menus on route change or outside click
 watch(() => route.fullPath, () => {
@@ -408,14 +468,31 @@ async function switchOrg(orgId: string) {
 
 async function createWorkspace() {
   orgMenuOpen.value = false;
-  const name = window.prompt('Workspace name');
-  if (!name?.trim()) return;
+  newWorkspaceName.value = '';
+  newWorkspaceError.value = null;
+  showCreateWorkspace.value = true;
+  // Focus the input after the modal is mounted
+  await nextTick();
+  newWorkspaceInputRef.value?.focus();
+}
+
+async function submitCreateWorkspace() {
+  const name = newWorkspaceName.value.trim();
+  if (!name) {
+    newWorkspaceError.value = 'Name is required';
+    return;
+  }
+  creatingWorkspace.value = true;
+  newWorkspaceError.value = null;
   try {
-    await auth.createOrg(name.trim());
+    await auth.createOrg(name);
     const { projects } = await apiStore.listProjects();
     projectStore.setProjects(projects);
+    showCreateWorkspace.value = false;
   } catch (e) {
-    window.alert(`Failed to create workspace: ${e instanceof Error ? e.message : 'unknown error'}`);
+    newWorkspaceError.value = e instanceof Error ? e.message : 'Failed to create workspace';
+  } finally {
+    creatingWorkspace.value = false;
   }
 }
 
@@ -462,6 +539,7 @@ const systemNav = [
   { to: '/settings/ai',          label: 'AI Providers', icon: 'i-ph-brain-light' },
   { to: '/settings/skills',      label: 'Skills',       icon: 'i-ph-lightbulb-light' },
   { to: '/settings/knowledge',   label: 'Knowledge',    icon: 'i-ph-book-open-light' },
+  { to: '/settings/workspace',   label: 'Workspace',    icon: 'i-ph-buildings-light' },
   { to: '/settings',             label: 'Settings',     icon: 'i-ph-gear-six-light' },
 ];
 

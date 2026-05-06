@@ -110,10 +110,10 @@ export class OrganizationService {
   }
 
   async listMembers(orgId: string): Promise<
-    Array<{ userId: string; email: string; name: string | null; role: OrgRole; joinedAt: Date }>
+    Array<{ userId: string; email: string; name: string | null; image: string | null; role: OrgRole; joinedAt: Date }>
   > {
     const { rows } = await this.pool.query(
-      `SELECT m.user_id, u.email, u.name, m.role, m.joined_at
+      `SELECT m.user_id, u.email, u.name, u.image, m.role, m.joined_at
          FROM organization_memberships m
          JOIN auth_user u ON u.id = m.user_id
         WHERE m.organization_id = $1
@@ -124,6 +124,7 @@ export class OrganizationService {
       userId:   String(r['user_id']),
       email:    String(r['email']),
       name:     (r['name'] as string | null) ?? null,
+      image:    (r['image'] as string | null) ?? null,
       role:     r['role'] as OrgRole,
       joinedAt: new Date(r['joined_at']),
     }));
@@ -188,6 +189,94 @@ export class OrganizationService {
     await this.pool.query(
       `UPDATE auth_session SET active_organization_id = $1, updated_at = NOW() WHERE id = $2`,
       [orgId, sessionId],
+    );
+  }
+
+  // ── Workspace settings (rename / delete / leave) ─────────────────────────
+
+  async update(
+    orgId: string,
+    fields: { name?: string; slug?: string; logoUrl?: string | null },
+  ): Promise<Organization | null> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    let i = 1;
+    if (fields.name    !== undefined) { sets.push(`name = $${i++}`);     params.push(fields.name); }
+    if (fields.slug    !== undefined) { sets.push(`slug = $${i++}`);     params.push(fields.slug); }
+    if (fields.logoUrl !== undefined) { sets.push(`logo_url = $${i++}`); params.push(fields.logoUrl); }
+    if (sets.length === 0) return await this.getById(orgId);
+    params.push(orgId);
+    const { rows: [r] } = await this.pool.query(
+      `UPDATE organizations SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+      params,
+    );
+    return r ? this.mapOrg(r) : null;
+  }
+
+  /** Hard delete org and all dependent rows via FK cascade. */
+  async delete(orgId: string): Promise<void> {
+    await this.pool.query(`DELETE FROM organizations WHERE id = $1`, [orgId]);
+  }
+
+  // ── Member management ─────────────────────────────────────────────────────
+
+  async updateMemberRole(orgId: string, userId: string, role: OrgRole): Promise<void> {
+    await this.pool.query(
+      `UPDATE organization_memberships SET role = $1
+        WHERE organization_id = $2 AND user_id = $3`,
+      [role, orgId, userId],
+    );
+  }
+
+  async removeMember(orgId: string, userId: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM organization_memberships
+        WHERE organization_id = $1 AND user_id = $2`,
+      [orgId, userId],
+    );
+  }
+
+  /** Returns true if the org still has at least one owner after a role change. */
+  async hasOtherOwner(orgId: string, excludeUserId: string): Promise<boolean> {
+    const { rows: [r] } = await this.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM organization_memberships
+        WHERE organization_id = $1 AND role = 'owner' AND user_id <> $2`,
+      [orgId, excludeUserId],
+    );
+    return Number(r?.count ?? '0') > 0;
+  }
+
+  // ── Invitations management ────────────────────────────────────────────────
+
+  async listInvitations(orgId: string): Promise<
+    Array<{ id: string; email: string; role: OrgRole; status: string; token: string;
+            invitedBy: string; createdAt: Date; expiresAt: Date }>
+  > {
+    const { rows } = await this.pool.query(
+      `SELECT id, email, role, status, token, invited_by, created_at, expires_at
+         FROM organization_invitations
+        WHERE organization_id = $1
+        ORDER BY created_at DESC`,
+      [orgId],
+    );
+    return rows.map((r) => ({
+      id:        String(r['id']),
+      email:     String(r['email']),
+      role:      r['role'] as OrgRole,
+      status:    String(r['status']),
+      token:     String(r['token']),
+      invitedBy: String(r['invited_by']),
+      createdAt: new Date(r['created_at']),
+      expiresAt: new Date(r['expires_at']),
+    }));
+  }
+
+  async revokeInvitation(orgId: string, invitationId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE organization_invitations SET status = 'revoked'
+        WHERE id = $1 AND organization_id = $2 AND status = 'pending'`,
+      [invitationId, orgId],
     );
   }
 

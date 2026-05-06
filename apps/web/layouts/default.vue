@@ -215,25 +215,25 @@
     <div class="flex-1 flex flex-col min-w-0">
       <!-- Topbar — minimal, contextual actions -->
       <header
-        class="flex items-center justify-between h-12 px-4 border-b border-border bg-surface shrink-0"
+        class="flex items-center justify-between gap-2 h-12 px-4 border-b border-border bg-surface shrink-0"
       >
         <!-- Breadcrumb / page title -->
-        <div class="flex items-center gap-2 text-sm">
+        <div class="flex items-center gap-2 text-sm min-w-0 flex-1">
           <UIcon
             :name="currentNavIcon"
-            class="w-4 h-4 text-text-secondary"
+            class="w-4 h-4 text-text-secondary shrink-0"
           />
-          <span class="font-medium">{{ currentNavLabel }}</span>
+          <span class="font-medium shrink-0">{{ currentNavLabel }}</span>
           <template v-if="projectStore.activeProject">
-            <span class="text-text-faint">/</span>
-            <span class="text-text-secondary truncate max-w-48">
+            <span class="text-text-faint shrink-0">/</span>
+            <span class="text-text-secondary truncate min-w-0">
               {{ projectStore.activeProject.name }}
             </span>
           </template>
         </div>
 
         <!-- Right cluster -->
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 shrink-0">
           <!-- code-server quick link -->
           <a
             v-if="resolvedCodeServerUrl && projectStore.activeProject"

@@ -1,14 +1,24 @@
 <template>
   <div class="p-6 max-w-5xl mx-auto">
     <!-- Header -->
-    <div class="flex items-center justify-between mb-6">
-      <div>
+    <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+      <div class="min-w-0">
         <h1 class="text-2xl font-heading font-semibold">Projects</h1>
         <p class="text-sm text-text-secondary mt-0.5">Manage workspaces and associated agent sessions.</p>
       </div>
-      <UButton icon="i-ph-plus-light" size="sm" @click="showNewProjectModal = true">
-        New Project
-      </UButton>
+      <div class="flex items-center gap-2 flex-wrap">
+        <UButton
+          icon="i-ph-git-branch-light"
+          size="sm"
+          variant="outline"
+          @click="openImportFromGit"
+        >
+          Import from Git
+        </UButton>
+        <UButton icon="i-ph-plus-light" size="sm" @click="openNewProject">
+          New Project
+        </UButton>
+      </div>
     </div>
 
     <!-- Loading skeleton -->
@@ -28,7 +38,7 @@
       <span class="text-5xl mb-4">📁</span>
       <p class="font-semibold text-lg mb-1">No projects yet</p>
       <p class="text-sm text-text-secondary mb-6">Create your first project to link a workspace directory.</p>
-      <UButton icon="i-ph-plus-light" @click="showNewProjectModal = true">New Project</UButton>
+      <UButton icon="i-ph-plus-light" @click="openNewProject">New Project</UButton>
     </div>
 
     <!-- Project grid -->
@@ -87,7 +97,7 @@
         </div>
 
         <!-- Action row -->
-        <div class="flex items-center gap-2 mt-auto pt-1 border-t border-border">
+        <div class="flex items-center gap-1 mt-auto pt-2 border-t border-border flex-wrap">
           <UButton
             size="xs"
             variant="ghost"
@@ -115,7 +125,8 @@
             icon="i-ph-git-branch-light"
             @click.stop="openWorkingTree(project)"
           >
-            Working tree
+            <span class="hidden xl:inline">Working tree</span>
+            <span class="xl:hidden">Tree</span>
           </UButton>
           <UButton
             size="xs"
@@ -134,7 +145,9 @@
     <UModal v-model="showNewProjectModal" :ui="{ width: 'sm:max-w-lg' }">
       <UCard>
         <template #header>
-          <p class="font-semibold text-base">New Project</p>
+          <p class="font-semibold text-base">
+            {{ form.gitMode === 'link' ? 'Import from Git' : 'New Project' }}
+          </p>
         </template>
 
         <form class="space-y-4" @submit.prevent="createProject">
@@ -355,6 +368,29 @@ function resetForm() {
   form.namespace = '';
   form.linkedRepoFullName = '';
   createError.value = '';
+}
+
+/** Open the modal in default "New Project" mode (no git). */
+function openNewProject() {
+  resetForm();
+  showNewProjectModal.value = true;
+}
+
+/**
+ * Open the modal pre-configured for importing an existing repo. If exactly one
+ * git connection is available it gets pre-selected so the user can immediately
+ * pick a repo from the list.
+ */
+async function openImportFromGit() {
+  resetForm();
+  form.gitMode = 'link';
+  showNewProjectModal.value = true;
+  // The watch() on showNewProjectModal loads connections; wait a tick then
+  // auto-select the only/first one for nicer UX.
+  await nextTick();
+  if (connections.value.length === 1) {
+    form.gitConnectionId = connections.value[0]!.id;
+  }
 }
 
 watch(showNewProjectModal, async (open) => {

@@ -1,14 +1,25 @@
 /**
  * useKnowledge — wrapper around /api/knowledge/* endpoints.
  *
- * Org-scoped Markdown knowledge base with embedding-based retrieval.
+ * Scope-aware Markdown KB (XOR per spec v0.3):
+ *   - 'user' scope → personal KB of the authenticated user
+ *   - 'org'  scope → workspace KB of the active organization
+ *
  * Documents are stored in DB only (no filesystem vault). The `path` field
  * mimics an Obsidian-style folder layout ("guides/architecture.md") and is
  * used by the UI to render a folder tree.
  */
+export type KbScopeKind = 'user' | 'org';
+
+export interface KbScope {
+  kind:           KbScopeKind;
+  userId?:        string;
+  organizationId?: string;
+}
+
 export interface KnowledgeDocSummary {
   id:             string;
-  organizationId: string;
+  scope:          KbScope;
   createdBy:      string | null;
   title:          string;
   path:           string;
@@ -34,6 +45,7 @@ export interface KnowledgeChunkHit {
   chunkIndex:    number;
   content:       string;
   score:         number;
+  scope:         KbScope;
 }
 
 export function useKnowledge() {
@@ -48,8 +60,8 @@ export function useKnowledge() {
     });
   }
 
-  async function list(): Promise<KnowledgeDocSummary[]> {
-    const res = await req('/api/knowledge');
+  async function list(scope: KbScopeKind = 'org'): Promise<KnowledgeDocSummary[]> {
+    const res = await req(`/api/knowledge?scope=${scope}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { documents: KnowledgeDocSummary[] };
     return data.documents;
@@ -62,13 +74,19 @@ export function useKnowledge() {
     return data.document;
   }
 
-  async function create(input: {
-    title:   string;
-    path:    string;
-    content: string;
-    tags?:   string[];
-  }): Promise<KnowledgeDocument> {
-    const res = await req('/api/knowledge', { method: 'POST', body: JSON.stringify(input) });
+  async function create(
+    scope: KbScopeKind,
+    input: {
+      title:   string;
+      path:    string;
+      content: string;
+      tags?:   string[];
+    },
+  ): Promise<KnowledgeDocument> {
+    const res = await req(`/api/knowledge?scope=${scope}`, {
+      method: 'POST',
+      body:   JSON.stringify(input),
+    });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(err.error ?? `HTTP ${res.status}`);
@@ -102,10 +120,14 @@ export function useKnowledge() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
-  async function search(query: string, topK = 5): Promise<KnowledgeChunkHit[]> {
-    const res = await req('/api/knowledge/search', {
+  async function search(
+    query: string,
+    opts: { scope?: KbScopeKind | 'both'; topK?: number } = {},
+  ): Promise<KnowledgeChunkHit[]> {
+    const scope = opts.scope ?? 'both';
+    const res = await req(`/api/knowledge/search?scope=${scope}`, {
       method: 'POST',
-      body:   JSON.stringify({ query, topK }),
+      body:   JSON.stringify({ query, topK: opts.topK ?? 5 }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { hits: KnowledgeChunkHit[] };

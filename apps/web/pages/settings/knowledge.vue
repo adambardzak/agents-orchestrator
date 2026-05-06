@@ -1,13 +1,27 @@
 <template>
   <div class="p-6 max-w-7xl">
-    <div class="flex items-start justify-between mb-2">
-      <div>
-        <h1 class="text-display-md font-heading font-bold mb-2">Knowledge Base</h1>
+    <div class="flex items-start justify-between gap-3 mb-2 flex-wrap">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 mb-2 flex-wrap">
+          <h1 class="text-display-md font-heading font-bold">Knowledge Base</h1>
+          <span
+            class="text-xs px-2 py-0.5 rounded-full border flex items-center gap-1"
+            :class="kbScope === 'user'
+              ? 'bg-accent/10 text-accent border-accent/30'
+              : 'bg-surface text-text-muted border-border'"
+          >
+            <UIcon
+              :name="kbScope === 'user' ? 'i-ph-user-light' : 'i-ph-buildings-light'"
+              class="w-3 h-3"
+            />
+            {{ kbScope === 'user' ? 'My personal KB' : 'Workspace KB' }}
+          </span>
+        </div>
         <p class="text-text-secondary">
-          Org-scoped Markdown documents. Indexed automatically and injected
-          into agent prompts via similarity search. Use forward-slash paths
+          Markdown documents indexed automatically and injected into agent
+          prompts via similarity search. Use forward-slash paths
           (e.g. <code class="text-xs">guides/architecture.md</code>) to
-          organize documents into folders.
+          organize documents into folders. Switch scope from the topbar.
         </p>
       </div>
       <UButton icon="i-ph-plus-light" @click="openAddModal()">New document</UButton>
@@ -137,6 +151,7 @@ definePageMeta({ layout: 'default' });
 
 const api = useKnowledge();
 const toast = useToast();
+const { scope: kbScope } = useKbScope();
 
 const documents = ref<KnowledgeDocSummary[]>([]);
 const loading = ref(true);
@@ -294,7 +309,7 @@ async function onSave(): Promise<void> {
       selected.value = updated;
       toast.add({ title: 'Document updated', color: 'green' });
     } else {
-      const created = await api.create({
+      const created = await api.create(kbScope.value, {
         title:   form.title.trim(),
         path:    form.path.trim(),
         content: form.content,
@@ -303,7 +318,7 @@ async function onSave(): Promise<void> {
       // append to list as summary
       documents.value.push({
         id:             created.id,
-        organizationId: created.organizationId,
+        scope:          created.scope,
         createdBy:      created.createdBy,
         title:          created.title,
         path:           created.path,
@@ -374,8 +389,10 @@ async function onDelete(doc: KnowledgeDocument): Promise<void> {
 
 async function load(): Promise<void> {
   loading.value = true;
+  selected.value = null;
+  selectedId.value = null;
   try {
-    documents.value = await api.list();
+    documents.value = await api.list(kbScope.value);
   } catch (err) {
     toast.add({ title: 'Failed to load documents', description: (err as Error).message, color: 'red' });
   } finally {
@@ -384,4 +401,7 @@ async function load(): Promise<void> {
 }
 
 onMounted(load);
+
+// Reload list when topbar scope switches.
+watch(kbScope, load);
 </script>

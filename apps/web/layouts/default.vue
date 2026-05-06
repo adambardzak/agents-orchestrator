@@ -234,6 +234,35 @@
 
         <!-- Right cluster -->
         <div class="flex items-center gap-2 shrink-0">
+          <!-- KB scope switcher: My KB ↔ Workspace KB -->
+          <div
+            class="hidden md:inline-flex items-center rounded-md border border-border overflow-hidden"
+            title="Active knowledge base scope"
+          >
+            <button
+              type="button"
+              class="flex items-center gap-1 px-2 py-1 text-xs transition"
+              :class="kbScope === 'user'
+                ? 'bg-accent/10 text-accent'
+                : 'text-text-muted hover:bg-surface-hover hover:text-text-primary'"
+              @click="setKbScope('user')"
+            >
+              <UIcon name="i-ph-user-light" class="w-3 h-3" />
+              My KB
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-1 px-2 py-1 text-xs border-l border-border transition"
+              :class="kbScope === 'org'
+                ? 'bg-accent/10 text-accent'
+                : 'text-text-muted hover:bg-surface-hover hover:text-text-primary'"
+              @click="setKbScope('org')"
+            >
+              <UIcon name="i-ph-buildings-light" class="w-3 h-3" />
+              Workspace KB
+            </button>
+          </div>
+
           <!-- code-server quick link -->
           <a
             v-if="resolvedCodeServerUrl && projectStore.activeProject"
@@ -425,6 +454,9 @@ const auth         = useAuth();
 const config       = useRuntimeConfig();
 const route        = useRoute();
 const colorMode    = useColorMode();
+
+// KB scope switcher (topbar)
+const { scope: kbScope, setScope: setKbScope } = useKbScope();
 
 const stopping     = ref(false);
 const orgMenuOpen  = ref(false);

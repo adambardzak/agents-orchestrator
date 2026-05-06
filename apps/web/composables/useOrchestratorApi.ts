@@ -91,14 +91,14 @@ export function useOrchestratorApi() {
   }
 
   async function deleteProject(id: string): Promise<void> {
-    const res = await req('/api/projects/${id}', { method: 'DELETE' });
+    const res = await req(`/api/projects/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function listProjectFiles(
     projectId: string,
   ): Promise<{ workspacePath: string; tree: FileNode[] }> {
-    const res = await req('/api/projects/${projectId}/files');
+    const res = await req(`/api/projects/${projectId}/files`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<{ workspacePath: string; tree: FileNode[] }>;
   }
@@ -133,24 +133,24 @@ export function useOrchestratorApi() {
     if (opts?.limit) params.set('limit', String(opts.limit));
     if (opts?.projectId) params.set('projectId', opts.projectId);
     const qs = params.toString() ? `?${params.toString()}` : '';
-    const res = await req('/api/sessions${qs}');
+    const res = await req(`/api/sessions${qs}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<ListSessionsResponse>;
   }
 
   async function getSession(sessionId: string): Promise<GetSessionResponse> {
-    const res = await req('/api/sessions/${sessionId}');
+    const res = await req(`/api/sessions/${sessionId}`);
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<GetSessionResponse>;
   }
 
   async function cancelSession(sessionId: string): Promise<void> {
-    await req('/api/sessions/${sessionId}', { method: 'DELETE' });
+    await req(`/api/sessions/${sessionId}`, { method: 'DELETE' });
   }
 
   async function deleteSession(sessionId: string): Promise<void> {
-    const res = await req('/api/sessions/${sessionId}', { method: 'DELETE' });
+    const res = await req(`/api/sessions/${sessionId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
@@ -161,11 +161,11 @@ export function useOrchestratorApi() {
   }
 
   async function pauseTask(taskId: string): Promise<void> {
-    await req('/api/tasks/${taskId}/pause', { method: 'POST' });
+    await req(`/api/tasks/${taskId}/pause`, { method: 'POST' });
   }
 
   async function stopTask(taskId: string): Promise<void> {
-    await req('/api/tasks/${taskId}/stop', { method: 'POST' });
+    await req(`/api/tasks/${taskId}/stop`, { method: 'POST' });
   }
 
   async function createAgent(agent: Partial<AgentDefinition>): Promise<AgentDefinition> {
@@ -177,7 +177,7 @@ export function useOrchestratorApi() {
   }
 
   async function updateAgent(id: string, updates: Partial<AgentDefinition>): Promise<AgentDefinition> {
-    const res = await req('/api/agents/${id}', { method: 'PATCH',
+    const res = await req(`/api/agents/${id}`, { method: 'PATCH',
       
       body: JSON.stringify(updates) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -203,17 +203,17 @@ export function useOrchestratorApi() {
   }
 
   async function approveTask(taskId: string): Promise<void> {
-    const res = await req('/api/tasks/${taskId}/approve', { method: 'POST' });
+    const res = await req(`/api/tasks/${taskId}/approve`, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function rejectTask(taskId: string): Promise<void> {
-    const res = await req('/api/tasks/${taskId}/reject', { method: 'POST' });
+    const res = await req(`/api/tasks/${taskId}/reject`, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
   async function injectToTask(taskId: string, message: string): Promise<{ injected: boolean }> {
-    const res = await req('/api/tasks/${taskId}/inject', { method: 'POST',
+    const res = await req(`/api/tasks/${taskId}/inject`, { method: 'POST',
       
       body: JSON.stringify({ message }),
     });
@@ -225,7 +225,7 @@ export function useOrchestratorApi() {
     sessionId: string,
     answers: Record<string, string>,
   ): Promise<{ task: unknown }> {
-    const res = await req('/api/sessions/${sessionId}/clarify', { method: 'POST',
+    const res = await req(`/api/sessions/${sessionId}/clarify`, { method: 'POST',
       
       body: JSON.stringify({ answers }),
     });
@@ -235,13 +235,13 @@ export function useOrchestratorApi() {
 
   // ── Tickets ──────────────────────────────────────────────────────────────
   async function listTickets(sessionId: string): Promise<ListTicketsResponse> {
-    const res = await req('/api/sessions/${sessionId}/tickets');
+    const res = await req(`/api/sessions/${sessionId}/tickets`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<ListTicketsResponse>;
   }
 
   async function getTicket(ticketId: string): Promise<GetTicketResponse> {
-    const res = await req('/api/tickets/${ticketId}');
+    const res = await req(`/api/tickets/${ticketId}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<GetTicketResponse>;
   }
@@ -250,7 +250,7 @@ export function useOrchestratorApi() {
     ticketId: string,
     body: string,
   ): Promise<{ comment: TicketComment }> {
-    const res = await req('/api/tickets/${ticketId}/comments', { method: 'POST',
+    const res = await req(`/api/tickets/${ticketId}/comments`, { method: 'POST',
       
       body: JSON.stringify({ body }),
     });
@@ -262,7 +262,7 @@ export function useOrchestratorApi() {
     ticketId: string,
     status: TicketStatus,
   ): Promise<{ ticket: Ticket }> {
-    const res = await req('/api/tickets/${ticketId}/status', { method: 'PATCH',
+    const res = await req(`/api/tickets/${ticketId}/status`, { method: 'PATCH',
       
       body: JSON.stringify({ status }),
     });

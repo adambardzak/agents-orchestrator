@@ -4,6 +4,10 @@ import { v4 as uuid } from 'uuid';
 import nodePath from 'node:path';
 import { promises as fs } from 'node:fs';
 import { env } from '../config/env.js';
+import { GitConnectionService } from '../services/git/connection-service.js';
+import { ProjectRepoService } from '../services/git/project-repo-service.js';
+import { getGitProvider } from '../services/git/registry.js';
+import { cloneRepo } from '../services/git/workspace-git.js';
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -16,6 +20,31 @@ const createProjectSchema = z.object({
    * If omitted, auto-generated under WORKSPACES_ROOT/{uuid}.
    */
   workspacePath: z.string().optional(),
+
+  /**
+   * Optional Git integration. Three mutually-exclusive flows:
+   *   1. omit `git` entirely  → no remote, local-only project
+   *   2. `git.action = 'create'` → call provider.createRepo, then clone
+   *   3. `git.action = 'link'`   → clone an existing repo by full_name
+   */
+  git: z.discriminatedUnion('action', [
+    z.object({
+      action:           z.literal('create'),
+      gitConnectionId:  z.string().uuid(),
+      repoName:         z.string().min(1).max(100),
+      visibility:       z.enum(['private', 'public', 'internal']).default('private'),
+      namespace:        z.string().optional(), // org/group/workspace
+    }),
+    z.object({
+      action:           z.literal('link'),
+      gitConnectionId:  z.string().uuid(),
+      fullName:         z.string().min(1), // "owner/repo"
+      cloneUrl:         z.string().url(),
+      defaultBranch:    z.string().default('main'),
+      visibility:       z.enum(['private', 'public', 'internal']).default('private'),
+      externalId:       z.string().optional(),
+    }),
+  ]).optional(),
 });
 
 // ── Ignore patterns for file listing ─────────────────────────────────────────
@@ -151,8 +180,11 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
     };
   });
 
-  // POST /api/projects — create project + provision workspace directory
+  // POST /api/projects — create project + provision workspace + optional git repo
   fastify.post('/api/projects', async (request, reply) => {
+    const user  = await request.requireUser();
+    const orgId = request.session?.activeOrganizationId ?? null;
+
     const body = createProjectSchema.parse(request.body);
     const id = uuid();
 
@@ -161,6 +193,7 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       ? nodePath.resolve(body.workspacePath) // normalise, strip trailing slash
       : nodePath.join(env.WORKSPACES_ROOT, id);
 
+    const willClone = !!body.git; // skip mkdir of sub-dirs if cloning
     // Ensure workspace exists (create if needed)
     try {
       const stat = await fs.stat(workspacePath);
@@ -169,23 +202,110 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       }
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // Directory doesn't exist — create it with standard sub-dirs
-        await fs.mkdir(nodePath.join(workspacePath, '.opencode'), { recursive: true });
-        await fs.mkdir(nodePath.join(workspacePath, '.obsidian-vault'), { recursive: true });
-        await fs.mkdir(nodePath.join(workspacePath, 'src'), { recursive: true });
+        if (willClone) {
+          // Clone will create the dir itself; just ensure parent exists.
+          await fs.mkdir(nodePath.dirname(workspacePath), { recursive: true });
+        } else {
+          // Local-only project: scaffold the standard sub-dirs.
+          await fs.mkdir(nodePath.join(workspacePath, '.opencode'),       { recursive: true });
+          await fs.mkdir(nodePath.join(workspacePath, '.obsidian-vault'), { recursive: true });
+          await fs.mkdir(nodePath.join(workspacePath, 'src'),             { recursive: true });
+        }
       } else {
         throw err; // unexpected error (e.g. EACCES)
       }
     }
 
+    // ── Optional Git integration ────────────────────────────────────────────
+    type RepoInsert = {
+      gitConnectionId: string;
+      provider:        'github' | 'gitlab' | 'bitbucket';
+      remoteUrl:       string;
+      defaultBranch:   string;
+      fullName:        string;
+      visibility:      'private' | 'public' | 'internal';
+      externalId:      string | null;
+    } | null;
+    let repoToInsert: RepoInsert = null;
+
+    if (body.git) {
+      const connections = new GitConnectionService(fastify.pg.pool);
+      const conn = await connections.getById(body.git.gitConnectionId);
+      if (!conn) return reply.status(400).send({ error: 'Unknown git connection' });
+      if (orgId && conn.organizationId !== orgId) {
+        return reply.status(403).send({ error: 'Connection belongs to a different org' });
+      }
+      const provider = getGitProvider(conn.provider);
+      if (!provider) {
+        return reply.status(400).send({ error: `Provider ${conn.provider} not configured` });
+      }
+      const token = await connections.getAccessToken(conn.id);
+      if (!token) return reply.status(500).send({ error: 'Git token unavailable' });
+
+      try {
+        if (body.git.action === 'create') {
+          const repo = await provider.createRepo(token, {
+            name:        body.git.repoName,
+            description: body.description ?? '',
+            visibility:  body.git.visibility,
+            ...(body.git.namespace ? { namespace: body.git.namespace } : {}),
+            autoInit:    true, // need an initial commit so we can clone
+          });
+          await cloneRepo({
+            authenticatedUrl: provider.authenticatedCloneUrl(token, repo),
+            targetDir:        workspacePath,
+            branch:           repo.defaultBranch,
+          });
+          repoToInsert = {
+            gitConnectionId: conn.id,
+            provider:        conn.provider,
+            remoteUrl:       repo.cloneUrl,
+            defaultBranch:   repo.defaultBranch,
+            fullName:        repo.fullName,
+            visibility:      body.git.visibility,
+            externalId:      repo.id,
+          };
+        } else {
+          // link existing repo
+          const authedUrl = body.git.cloneUrl.replace(
+            'https://',
+            `https://x-access-token:${encodeURIComponent(token)}@`,
+          );
+          await cloneRepo({
+            authenticatedUrl: authedUrl,
+            targetDir:        workspacePath,
+            branch:           body.git.defaultBranch,
+          });
+          repoToInsert = {
+            gitConnectionId: conn.id,
+            provider:        conn.provider,
+            remoteUrl:       body.git.cloneUrl,
+            defaultBranch:   body.git.defaultBranch,
+            fullName:        body.git.fullName,
+            visibility:      body.git.visibility,
+            externalId:      body.git.externalId ?? null,
+          };
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        fastify.log.error({ err }, 'Git provisioning failed');
+        return reply.status(502).send({ error: `Git provisioning failed: ${msg}` });
+      }
+    }
+
     const { rows: [project] } = await fastify.pg.query(
-      `INSERT INTO projects (id, name, description, context_type, workspace_path)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO projects (id, name, description, context_type, workspace_path, organization_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [id, body.name, body.description ?? null, body.contextType, workspacePath],
+      [id, body.name, body.description ?? null, body.contextType, workspacePath, orgId, user.id],
     );
 
-    fastify.log.info({ projectId: id, workspacePath }, 'Project created');
+    if (repoToInsert) {
+      const repos = new ProjectRepoService(fastify.pg.pool);
+      await repos.create({ projectId: id, ...repoToInsert });
+    }
+
+    fastify.log.info({ projectId: id, workspacePath, hasRepo: !!repoToInsert }, 'Project created');
     return reply.status(201).send({
       ...project,
       workspacePath: project.workspace_path,
@@ -338,6 +458,73 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       );
 
       return { chunks };
+    },
+  );
+
+  // ── Git endpoints ───────────────────────────────────────────────────────
+
+  // GET /api/projects/:id/repo — return linked repository or null
+  fastify.get<{ Params: { id: string } }>(
+    '/api/projects/:id/repo',
+    async (request) => {
+      const repos = new ProjectRepoService(fastify.pg.pool);
+      const repo = await repos.getByProject(request.params.id);
+      return { repo };
+    },
+  );
+
+  // GET /api/projects/:id/git/status — working tree status
+  fastify.get<{ Params: { id: string } }>(
+    '/api/projects/:id/git/status',
+    async (request, reply) => {
+      const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
+        'SELECT workspace_path FROM projects WHERE id = $1',
+        [request.params.id],
+      );
+      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      try {
+        const { getStatus } = await import('../services/git/workspace-git.js');
+        const status = await getStatus(project.workspace_path);
+        return { status };
+      } catch (err: unknown) {
+        // No git repo in workspace yet — return empty status rather than 500.
+        const msg = err instanceof Error ? err.message : 'unknown';
+        return { status: null, error: msg };
+      }
+    },
+  );
+
+  // GET /api/projects/:id/git/diff — working-tree (or commit-range) diff
+  fastify.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
+    '/api/projects/:id/git/diff',
+    async (request, reply) => {
+      const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
+        'SELECT workspace_path FROM projects WHERE id = $1',
+        [request.params.id],
+      );
+      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      try {
+        const { getDiff } = await import('../services/git/workspace-git.js');
+        const diff = await getDiff({
+          workspaceDir: project.workspace_path,
+          ...(request.query.from ? { from: request.query.from } : {}),
+          ...(request.query.to   ? { to:   request.query.to   } : {}),
+        });
+        return { diff };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        return reply.status(400).send({ error: msg });
+      }
+    },
+  );
+
+  // GET /api/sessions/:id/commits — list per-session auto-commits
+  fastify.get<{ Params: { id: string } }>(
+    '/api/sessions/:id/commits',
+    async (request) => {
+      const repos = new ProjectRepoService(fastify.pg.pool);
+      const commits = await repos.listForSession(request.params.id);
+      return { commits };
     },
   );
 }

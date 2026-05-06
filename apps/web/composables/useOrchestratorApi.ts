@@ -76,6 +76,9 @@ export function useOrchestratorApi() {
     description?: string;
     contextType?: 'personal' | 'cez';
     workspacePath?: string;
+    git?:
+      | { action: 'create'; gitConnectionId: string; repoName: string; visibility: 'private' | 'public' | 'internal'; namespace?: string }
+      | { action: 'link';   gitConnectionId: string; fullName: string; cloneUrl: string; defaultBranch: string; visibility: 'private' | 'public' | 'internal'; externalId?: string };
   }): Promise<Project> {
     const res = await req('/api/projects', { method: 'POST',
       
@@ -279,6 +282,48 @@ export function useOrchestratorApi() {
     return res.json() as Promise<{ ticket: Ticket; taskId: string }>;
   }
 
+  // ── Git: project repo + working tree ─────────────────────────────────────
+  async function getProjectRepo(projectId: string): Promise<{ repo: unknown | null }> {
+    const res = await req(`/api/projects/${projectId}/repo`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<{ repo: unknown | null }>;
+  }
+
+  async function getGitStatus(projectId: string): Promise<{
+    status: {
+      branch: string; ahead: number; behind: number;
+      staged: string[]; modified: string[]; untracked: string[]; deleted: string[];
+      clean: boolean;
+    } | null;
+    error?: string;
+  }> {
+    const res = await req(`/api/projects/${projectId}/git/status`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as ReturnType<typeof getGitStatus> extends Promise<infer T> ? Promise<T> : never;
+  }
+
+  async function getGitDiff(projectId: string, opts?: { from?: string; to?: string }): Promise<{ diff: string }> {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set('from', opts.from);
+    if (opts?.to)   params.set('to',   opts.to);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await req(`/api/projects/${projectId}/git/diff${qs}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<{ diff: string }>;
+  }
+
+  async function getSessionCommits(sessionId: string): Promise<{
+    commits: Array<{
+      id: string; sha: string; message: string; branch: string;
+      filesChanged: number; insertions: number; deletions: number;
+      pushedAt: string | null; createdAt: string;
+    }>;
+  }> {
+    const res = await req(`/api/sessions/${sessionId}/commits`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as ReturnType<typeof getSessionCommits> extends Promise<infer T> ? Promise<T> : never;
+  }
+
   return {
     githubToken,
     createSession,
@@ -307,5 +352,9 @@ export function useOrchestratorApi() {
     addTicketComment,
     updateTicketStatus,
     reopenTicket,
+    getProjectRepo,
+    getGitStatus,
+    getGitDiff,
+    getSessionCommits,
   };
 }

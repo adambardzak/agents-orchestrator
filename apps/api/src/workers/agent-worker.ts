@@ -16,6 +16,10 @@ import { env } from '../config/env.js';
 import { AGENT_QUEUE_NAME, type AgentJobData } from '../services/queue/task-queue.js';
 import { MODEL_ROUTING } from '../config/models.js';
 import { TicketService, tryParsePlannerOutput, isSplittableAgent } from '../services/tickets/ticket-service.js';
+import { ProjectRepoService } from '../services/git/project-repo-service.js';
+import { GitConnectionService } from '../services/git/connection-service.js';
+import { getGitProvider } from '../services/git/registry.js';
+import { commitAll, pushBranch } from '../services/git/workspace-git.js';
 
 // ─── Orchestrator plan shape ──────────────────────────────────────────────────
 
@@ -600,6 +604,13 @@ export class AgentWorker {
               task.id,
             );
 
+            // Auto-commit per-task changes for non-orchestrator agents only.
+            // Orchestrators don't write code, just plan, so committing them
+            // would create empty commits.
+            if (task.agentType !== 'orchestrator') {
+              void this.autoCommitTaskChanges(task, summary);
+            }
+
             if (task.agentType === 'orchestrator') {
               // Check for clarification request BEFORE checking for a plan
               // The orchestrator may emit clarification_needed in either the streaming output
@@ -732,6 +743,79 @@ export class AgentWorker {
    * Falls back to `{WORKSPACES_ROOT}/{projectId}/sessions/{sessionId}` if the
    * project row is missing.
    */
+  /**
+   * Auto-commit any changes in the project workspace to a per-session branch
+   * after a non-orchestrator task completes. No-op if the project has no
+   * linked git repository, or if the working tree is clean.
+   *
+   * Errors are logged but never thrown — git failures must not break the
+   * agent task. Push errors leave the commit local; the user can re-push later.
+   */
+  private async autoCommitTaskChanges(task: AgentTask, summary: string): Promise<void> {
+    try {
+      const repos = new ProjectRepoService(this.db);
+      const repo = await repos.getByProject(task.projectId);
+      if (!repo) return; // Project has no git remote — skip silently.
+
+      const projectRoot = await this.getProjectWorkspaceDir(task.projectId);
+      const branch = `agent/session-${task.sessionId}`;
+      const shortSummary = summary.split('\n')[0]?.slice(0, 100) ?? task.agentType;
+      const message = `[${task.agentType}] ${shortSummary}\n\nTask: ${task.id}\nSession: ${task.sessionId}`;
+
+      const commit = await commitAll({
+        workspaceDir: projectRoot,
+        branch,
+        message,
+        authorName:  'Agent Orchestrator',
+        authorEmail: 'agent@orchestrator.local',
+        createBranchIfMissing: true,
+      });
+      if (!commit) return; // Clean working tree.
+
+      let pushed = false;
+      try {
+        const connections = new GitConnectionService(this.db);
+        const token = await connections.getAccessToken(repo.gitConnectionId);
+        const provider = getGitProvider(repo.provider);
+        if (token && provider) {
+          await pushBranch({
+            workspaceDir:     projectRoot,
+            branch,
+            authenticatedUrl: provider.authenticatedCloneUrl(token, {
+              id:            repo.externalId ?? '',
+              name:          repo.fullName.split('/').pop() ?? '',
+              fullName:      repo.fullName,
+              description:   null,
+              private:       repo.visibility !== 'public',
+              defaultBranch: repo.defaultBranch,
+              htmlUrl:       repo.remoteUrl,
+              cloneUrl:      repo.remoteUrl,
+              sshUrl:        null,
+              updatedAt:     new Date().toISOString(),
+            }),
+          });
+          pushed = true;
+        }
+      } catch (pushErr) {
+        this.logger.warn({ err: pushErr, taskId: task.id }, 'Auto-commit push failed (commit kept locally)');
+      }
+
+      await repos.recordCommit({
+        sessionId: task.sessionId,
+        projectId: task.projectId,
+        commit,
+        pushed,
+      });
+
+      this.logger.info(
+        { taskId: task.id, sha: commit.sha, branch, pushed },
+        'Auto-committed task changes',
+      );
+    } catch (err) {
+      this.logger.warn({ err, taskId: task.id }, 'Auto-commit failed (non-fatal)');
+    }
+  }
+
   private async getProjectWorkspaceDir(projectId: string, sessionId?: string): Promise<string> {
     let projectRoot: string;
     try {

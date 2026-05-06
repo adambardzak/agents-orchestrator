@@ -125,21 +125,12 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
   });
 
   // 2) Resolve session from cookie on every request, attach to request.
+  //    We always try Better Auth first — if there's a real signed-in user,
+  //    use them. Only when no session exists *and* REQUIRE_AUTH=false do we
+  //    fall back to the bootstrap user (single-user dev mode).
   fastify.addHook('preHandler', async (request: FastifyRequest, _reply: FastifyReply) => {
     request.user = null;
     request.session = null;
-
-    if (!env.REQUIRE_AUTH) {
-      // Dev mode: pretend the bootstrap user is always signed in.
-      request.user = BOOTSTRAP_USER;
-      request.session = {
-        id: 'bootstrap',
-        userId: BOOTSTRAP_USER.id,
-        activeOrganizationId: BOOTSTRAP_ORG_ID,
-        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-      };
-      return;
-    }
 
     try {
       const headers = new Headers();
@@ -166,6 +157,17 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
       }
     } catch (err) {
       request.log.warn({ err }, 'failed to resolve session');
+    }
+
+    // Bootstrap fallback for dev mode — only when no real session.
+    if (!request.user && !env.REQUIRE_AUTH) {
+      request.user = BOOTSTRAP_USER;
+      request.session = {
+        id: 'bootstrap',
+        userId: BOOTSTRAP_USER.id,
+        activeOrganizationId: BOOTSTRAP_ORG_ID,
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      };
     }
   });
 

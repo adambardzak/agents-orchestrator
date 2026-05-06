@@ -112,6 +112,14 @@
           <UButton
             size="xs"
             variant="ghost"
+            icon="i-ph-git-branch-light"
+            @click.stop="openWorkingTree(project)"
+          >
+            Working tree
+          </UButton>
+          <UButton
+            size="xs"
+            variant="ghost"
             color="red"
             icon="i-ph-trash-light"
             class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity"
@@ -149,6 +157,54 @@
             <UInput v-model="form.workspacePath" placeholder="/home/user/projects/my-project" font-mono />
           </UFormGroup>
 
+          <!-- Git integration -->
+          <UFormGroup label="Git repository" hint="Optionally link a Git remote so agent changes are pushed automatically.">
+            <USelect
+              v-model="form.gitMode"
+              :options="[
+                { label: 'No git (local only)',          value: 'none'   },
+                { label: 'Create new repo',              value: 'create' },
+                { label: 'Link existing repo (clone)',   value: 'link'   },
+              ]"
+            />
+          </UFormGroup>
+
+          <template v-if="form.gitMode !== 'none'">
+            <UFormGroup label="Connection" required>
+              <USelect
+                v-model="form.gitConnectionId"
+                :options="connectionOptions"
+                placeholder="Select connected account"
+              />
+              <p v-if="connections.length === 0" class="text-xs text-pending mt-1">
+                No connections — <NuxtLink to="/settings/connections" class="underline">connect a provider</NuxtLink> first.
+              </p>
+            </UFormGroup>
+
+            <template v-if="form.gitMode === 'create'">
+              <UFormGroup label="Repo name" required>
+                <UInput v-model="form.repoName" placeholder="my-project" />
+              </UFormGroup>
+              <UFormGroup label="Visibility">
+                <USelect v-model="form.visibility" :options="['private', 'public', 'internal']" />
+              </UFormGroup>
+              <UFormGroup label="Namespace" hint="Org/group/workspace. Leave blank for personal account.">
+                <UInput v-model="form.namespace" placeholder="my-org" />
+              </UFormGroup>
+            </template>
+
+            <template v-if="form.gitMode === 'link'">
+              <UFormGroup label="Repository" required>
+                <USelect
+                  v-model="form.linkedRepoFullName"
+                  :options="repoOptions"
+                  :loading="reposLoading"
+                  placeholder="Select a repo"
+                />
+              </UFormGroup>
+            </template>
+          </template>
+
           <p v-if="createError" class="text-sm text-failed">{{ createError }}</p>
         </form>
 
@@ -184,6 +240,19 @@
             <UButton color="red" :loading="deletingId !== null" @click="doDelete">Delete</UButton>
           </div>
         </template>
+      </UCard>
+    </UModal>
+
+    <!-- ── Working Tree Modal ───────────────────────────────────────────── -->
+    <UModal v-model="showWorkingTreeModal" :ui="{ width: 'sm:max-w-3xl' }">
+      <UCard>
+        <template #header>
+          <div class="flex items-center justify-between">
+            <p class="font-semibold text-base">Working tree — {{ workingTreeProject?.name }}</p>
+            <UButton variant="ghost" icon="i-ph-x-light" @click="showWorkingTreeModal = false" />
+          </div>
+        </template>
+        <WorkingTreePanel v-if="workingTreeProject" :project-id="workingTreeProject.id" />
       </UCard>
     </UModal>
   </div>
@@ -236,18 +305,70 @@ const form = reactive({
   description: '',
   contextType: 'personal' as 'personal' | 'cez',
   workspacePath: '',
+  gitMode:           'none' as 'none' | 'create' | 'link',
+  gitConnectionId:   '',
+  repoName:          '',
+  visibility:        'private' as 'private' | 'public' | 'internal',
+  namespace:         '',
+  linkedRepoFullName: '',
 });
+
+// Git connections + repos loaded lazily when modal opens
+const gitApi = useGitConnections();
+const connections = ref<Array<{ id: string; provider: string; accountLogin: string }>>([]);
+const repos = ref<Array<{ id: string; fullName: string; cloneUrl: string; defaultBranch: string; private: boolean }>>([]);
+const reposLoading = ref(false);
+
+const connectionOptions = computed(() =>
+  connections.value.map((c) => ({
+    label: `${c.accountLogin} (${c.provider})`,
+    value: c.id,
+  })),
+);
+const repoOptions = computed(() =>
+  repos.value.map((r) => ({ label: r.fullName, value: r.fullName })),
+);
+
+watch(
+  () => form.gitConnectionId,
+  async (id) => {
+    if (!id || form.gitMode !== 'link') return;
+    reposLoading.value = true;
+    try {
+      const list = await gitApi.listRepos(id);
+      repos.value = list;
+    } finally {
+      reposLoading.value = false;
+    }
+  },
+);
 
 function resetForm() {
   form.name = '';
   form.description = '';
   form.contextType = 'personal';
   form.workspacePath = '';
+  form.gitMode = 'none';
+  form.gitConnectionId = '';
+  form.repoName = '';
+  form.visibility = 'private';
+  form.namespace = '';
+  form.linkedRepoFullName = '';
   createError.value = '';
 }
 
-watch(showNewProjectModal, (open) => {
-  if (!open) resetForm();
+watch(showNewProjectModal, async (open) => {
+  if (!open) {
+    resetForm();
+    return;
+  }
+  // Load connections when opening the modal
+  try {
+    const list = await gitApi.listConnections();
+    connections.value = list;
+  } catch (err) {
+    console.warn('Failed to load git connections', err);
+  }
 });
 
 async function createProject() {
@@ -255,11 +376,38 @@ async function createProject() {
   creating.value = true;
   createError.value = '';
   try {
+    let git: Parameters<typeof api.createProject>[0]['git'] | undefined;
+    if (form.gitMode === 'create') {
+      if (!form.gitConnectionId || !form.repoName.trim()) {
+        throw new Error('Connection and repo name are required for "Create new repo"');
+      }
+      git = {
+        action:          'create',
+        gitConnectionId: form.gitConnectionId,
+        repoName:        form.repoName.trim(),
+        visibility:      form.visibility,
+        ...(form.namespace.trim() ? { namespace: form.namespace.trim() } : {}),
+      };
+    } else if (form.gitMode === 'link') {
+      const repo = repos.value.find((r) => r.fullName === form.linkedRepoFullName);
+      if (!repo) throw new Error('Select a repository to link');
+      git = {
+        action:          'link',
+        gitConnectionId: form.gitConnectionId,
+        fullName:        repo.fullName,
+        cloneUrl:        repo.cloneUrl,
+        defaultBranch:   repo.defaultBranch,
+        visibility:      repo.private ? 'private' : 'public',
+        externalId:      repo.id,
+      };
+    }
+
     const project = await api.createProject({
       name: form.name.trim(),
       description: form.description.trim() || undefined,
       contextType: form.contextType,
       workspacePath: form.workspacePath.trim() || undefined,
+      ...(git ? { git } : {}),
     });
     projectStore.upsertProject(project);
     projectStore.setActiveProject(project);
@@ -275,6 +423,15 @@ async function createProject() {
 const showDeleteModal = ref(false);
 const deleteTarget = ref<Project | null>(null);
 const deletingId = ref<string | null>(null);
+
+// ── Working tree modal ────────────────────────────────────────────────────────
+const showWorkingTreeModal = ref(false);
+const workingTreeProject = ref<Project | null>(null);
+
+function openWorkingTree(project: Project): void {
+  workingTreeProject.value = project;
+  showWorkingTreeModal.value = true;
+}
 
 function confirmDelete(project: Project) {
   deleteTarget.value = project;

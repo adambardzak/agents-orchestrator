@@ -80,26 +80,28 @@ export function useAuth() {
         activeOrgId.value = null;
         return;
       }
-      const data = (await res.json()) as SessionResponse;
-      if (!data.user || !data.session) {
+      // Better Auth returns the literal `null` body when signed-out → guard.
+      const raw = (await res.json().catch(() => null)) as SessionResponse | null;
+      if (!raw || !raw.user || !raw.session) {
         user.value = null;
         session.value = null;
         orgs.value = [];
         activeOrgId.value = null;
         return;
       }
-      user.value = data.user;
+      user.value = raw.user;
       session.value = {
-        id: data.session.id,
-        expiresAt: data.session.expiresAt,
-        activeOrganizationId: data.session.active_organization_id,
+        id: raw.session.id,
+        expiresAt: raw.session.expiresAt,
+        activeOrganizationId: raw.session.active_organization_id,
       };
-      activeOrgId.value = data.session.active_organization_id;
+      activeOrgId.value = raw.session.active_organization_id;
 
       // Load orgs
       const orgRes = await authedFetch('/api/orgs');
       if (orgRes.ok) {
-        const { organizations } = (await orgRes.json()) as { organizations: AuthOrg[] };
+        const orgData = (await orgRes.json().catch(() => null)) as { organizations?: AuthOrg[] } | null;
+        const organizations = orgData?.organizations ?? [];
         orgs.value = organizations;
 
         // If no active org but user has at least one, default to the first
@@ -141,7 +143,7 @@ export function useAuth() {
   }
 
   async function signOut(): Promise<void> {
-    await authedFetch('/api/auth/sign-out', { method: 'POST' });
+    await authedFetch('/api/auth/sign-out', { method: 'POST', body: '{}' });
     user.value = null;
     session.value = null;
     orgs.value = [];
@@ -171,8 +173,15 @@ export function useAuth() {
   }
 
   async function setActiveOrg(orgId: string): Promise<void> {
-    const res = await authedFetch(`/api/orgs/${orgId}/activate`, { method: 'POST' });
-    if (!res.ok) throw new Error(`Failed to activate org (${res.status})`);
+    // Fastify rejects empty bodies with Content-Type: application/json, so send `{}`.
+    const res = await authedFetch(`/api/orgs/${orgId}/activate`, {
+      method: 'POST',
+      body: '{}',
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? `Failed to activate org (${res.status})`);
+    }
     activeOrgId.value = orgId;
     if (session.value) session.value.activeOrganizationId = orgId;
   }

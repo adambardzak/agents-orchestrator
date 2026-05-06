@@ -74,6 +74,9 @@ export class KnowledgeService {
     private readonly logger: FastifyBaseLogger,
     private readonly openAiApiKey?: string,
     private readonly embeddingEndpoint?: string,
+    /** Minimum cosine similarity (0..1) for a chunk to survive `retrieveForScopes`.
+     *  0 = no filtering (legacy). Recommended ~0.45. */
+    private readonly minScore: number = 0,
   ) {}
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
@@ -283,7 +286,7 @@ export class KnowledgeService {
       params,
     );
 
-    return rows.map((r) => ({
+    const hits: KnowledgeChunkHit[] = rows.map((r) => ({
       id:            r.id,
       documentId:    r.document_id,
       documentTitle: r.document_title,
@@ -295,6 +298,18 @@ export class KnowledgeService {
         ? { kind: 'user', userId: r.user_id }
         : { kind: 'org',  organizationId: r.organization_id! },
     }));
+
+    // Drop low-relevance hits when a threshold is configured. Done in JS so
+    // the pgvector index can still drive ORDER BY + LIMIT.
+    if (this.minScore <= 0) return hits;
+    const filtered = hits.filter((hit) => hit.score >= this.minScore);
+    if (filtered.length !== hits.length) {
+      this.logger.debug(
+        { dropped: hits.length - filtered.length, kept: filtered.length, minScore: this.minScore },
+        'KB: filtered low-relevance hits',
+      );
+    }
+    return filtered;
   }
 
   /**

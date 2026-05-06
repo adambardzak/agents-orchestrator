@@ -73,6 +73,25 @@ const envSchema = z.object({
   GITHUB_API_BASE: z.string().url().optional(),
   GITLAB_API_BASE: z.string().url().optional(),
 
+  // ── Context optimization knobs ──────────────────────────────────────────
+  /**
+   * Minimum cosine similarity (0..1) for a RAG/KB chunk to be injected into
+   * the agent system prompt. Hits below the threshold are dropped entirely.
+   * 0 = disabled (legacy behaviour: always inject top-K).
+   * Recommended: 0.40–0.50 — empirically filters most off-topic noise while
+   * preserving genuinely relevant matches.
+   */
+  RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.45),
+  KB_MIN_SCORE:  z.coerce.number().min(0).max(1).default(0.45),
+
+  /**
+   * Hard cap on the verbatim `design-system/frontend-rules.md` body when
+   * injected into the Frontend agent's system prompt. If the file exceeds
+   * this many characters it is truncated and a warning is logged so the
+   * user knows their rules doc is being clipped. Set to 0 to disable cap.
+   */
+  FRONTEND_RULES_MAX_CHARS: z.coerce.number().int().nonnegative().default(4000),
+
   /** When true (default), API requires an authenticated session for non-public routes.
    *  Set to "false" only for local single-user dev where you've intentionally
    *  disabled auth for fast iteration. */

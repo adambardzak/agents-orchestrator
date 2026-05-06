@@ -61,3 +61,21 @@ stored encrypted in the DB.
 | `OPENCODE_BIN` | Override path to OpenCode binary | `~/.opencode/bin/opencode` |
 | `BUDGET_DEFAULT_USD` | Default budget cap per session | `5` |
 | `NODE_EXTRA_CA_CERTS` | Path to extra CA bundle (for self-hosted Git/AI providers behind internal CAs) | (none) |
+
+## Context optimization
+
+These knobs control how much context each sub-agent receives in its system
+prompt. Lower values save tokens (and money) at the cost of potentially missing
+relevant context. Defaults are tuned for typical usage; tweak if you observe
+agents either drowning in irrelevant snippets or missing obvious context.
+
+| Var | What | Default | Range |
+|---|---|---|---|
+| `RAG_MIN_SCORE` | Minimum cosine similarity (0..1) for a code-RAG chunk to be injected. Hits below the threshold are dropped before the prompt is built. `0` disables the filter (legacy behaviour: always inject top-K). | `0.45` | `0`–`1` |
+| `KB_MIN_SCORE` | Same threshold but for Knowledge Base hits (workspace + personal docs). | `0.45` | `0`–`1` |
+| `FRONTEND_RULES_MAX_CHARS` | Hard cap on `design-system/frontend-rules.md` body length when injected into the Frontend agent. Above this length the file is truncated and a warning is logged. `0` disables the cap. | `4000` | `0`–`∞` |
+
+**Tuning guide:**
+- If agents complain "I don't have enough context", lower the score thresholds (try `0.30`).
+- If agents waste tokens summarizing unrelated files, raise them (`0.55`).
+- If a long `frontend-rules.md` is being silently truncated and you want all of it, raise `FRONTEND_RULES_MAX_CHARS` or set to `0`. Beware: very long rules docs can blow past the model's context window when combined with RAG/KB.

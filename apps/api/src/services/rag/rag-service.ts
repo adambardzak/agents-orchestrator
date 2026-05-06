@@ -47,6 +47,9 @@ export class RagService {
     private readonly logger: FastifyBaseLogger,
     private readonly openAiApiKey?: string,  // optional: GitHub Copilot embeddings endpoint
     private readonly embeddingEndpoint?: string,
+    /** Minimum cosine similarity (0..1) for a chunk to survive `retrieveContext`.
+     *  0 = no filtering (legacy). Recommended ~0.45. */
+    private readonly minScore: number = 0,
   ) {}
 
   // ── Indexing ────────────────────────────────────────────────────────────────
@@ -134,6 +137,19 @@ export class RagService {
         [`[${embedding.join(',')}]`, projectId, topK],
       );
       results = rows.map((r) => ({ id: r.id, filePath: r.file_path, chunkIndex: r.chunk_index, content: r.content, score: r.score }));
+
+      // Drop hits below the configured similarity threshold. Done in JS rather
+      // than SQL so the pgvector index can still be used (ORDER BY + LIMIT).
+      if (this.minScore > 0) {
+        const before = results.length;
+        results = results.filter((r) => (r.score ?? 0) >= this.minScore);
+        if (before !== results.length) {
+          this.logger.debug(
+            { projectId, before, after: results.length, minScore: this.minScore },
+            'RAG: filtered low-relevance chunks',
+          );
+        }
+      }
     } else {
       // Keyword fallback — full-text search
       const { rows } = await this.db.query<{

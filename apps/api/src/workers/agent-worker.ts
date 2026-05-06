@@ -255,7 +255,7 @@ export class AgentWorker {
     this.tickets = new TicketService(deps.db, deps.logger);
 
     this.aiProviders = new AIProviderService(deps.db);
-    this.knowledge = new KnowledgeService(deps.db, deps.logger, env.GITHUB_TOKEN);
+    this.knowledge = new KnowledgeService(deps.db, deps.logger, env.GITHUB_TOKEN, undefined, env.KB_MIN_SCORE);
     this.qaRunner = new QaRunner(deps.db, deps.logger);
 
     this.worker = new Worker<AgentJobData>(
@@ -341,10 +341,26 @@ export class AgentWorker {
     if (task.agentType === 'frontend') {
       const frontendRulesPath = nodePath.join(workspaceDir, 'design-system', 'frontend-rules.md');
       try {
-        const rules = await fs.readFile(frontendRulesPath, 'utf-8');
+        const rulesRaw = await fs.readFile(frontendRulesPath, 'utf-8');
+        const cap = env.FRONTEND_RULES_MAX_CHARS;
+        let rules = rulesRaw;
+        let truncated = false;
+        if (cap > 0 && rulesRaw.length > cap) {
+          // Keep the head: rules docs typically front-load most important
+          // conventions. Append a marker so the agent knows content was cut.
+          rules = rulesRaw.slice(0, cap) + `\n\n<!-- truncated: ${rulesRaw.length - cap} chars omitted (FRONTEND_RULES_MAX_CHARS=${cap}) -->`;
+          truncated = true;
+          this.logger.warn(
+            { taskId: task.id, original: rulesRaw.length, cap },
+            'frontend-rules.md exceeds FRONTEND_RULES_MAX_CHARS; truncating before injection',
+          );
+        }
         const rulesBlock = `\n\n## Project Frontend Rules (from design-system/frontend-rules.md)\n\n${rules}`;
         resolvedExtraContext = (resolvedExtraContext ?? '') + rulesBlock;
-        this.logger.info({ taskId: task.id }, 'Injected frontend-rules.md into Frontend agent context');
+        this.logger.info(
+          { taskId: task.id, chars: rules.length, truncated },
+          'Injected frontend-rules.md into Frontend agent context',
+        );
       } catch {
         // Design Agent hasn't run yet or no rules file — continue without it
       }

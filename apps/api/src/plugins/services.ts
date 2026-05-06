@@ -32,6 +32,8 @@ export default fp(async (fastify: FastifyInstance) => {
     dbPool,
     fastify.log,
     env.GITHUB_TOKEN,  // used as OpenAI-compatible API key for embeddings
+    undefined,         // default embedding endpoint
+    env.RAG_MIN_SCORE,
   );
 
   const taskQueue = new TaskQueue(

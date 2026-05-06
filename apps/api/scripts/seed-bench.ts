@@ -239,21 +239,14 @@ async function main(): Promise<void> {
     ],
   );
 
-  // Per-session workspace dirs (worker expects them) — mirror project root
-  // contents into each session subdir so frontend-rules.md, src/*.ts etc. are
-  // discoverable from the session workdir layout the worker uses.
+  // Per-session workspace dirs (worker expects them to exist as cwd).
+  // We intentionally do NOT mirror project-root content here — design files
+  // (e.g. design-system/frontend-rules.md) are read from the project root
+  // by the worker. This catches regressions of that path-resolution fix.
   for (const sid of [BENCH_IDS.sessionMain, BENCH_IDS.sessionBranch]) {
     const sessionDir = path.join(workspacePath, 'sessions', sid);
     await fs.rm(sessionDir, { recursive: true, force: true });
     await fs.mkdir(sessionDir, { recursive: true });
-    // Recursively copy everything except the `sessions/` dir itself.
-    const entries = await fs.readdir(workspacePath, { withFileTypes: true });
-    for (const e of entries) {
-      if (e.name === 'sessions') continue;
-      const src = path.join(workspacePath, e.name);
-      const dst = path.join(sessionDir, e.name);
-      await fs.cp(src, dst, { recursive: true });
-    }
   }
   console.log('  ✓ sessions (main + branch)');
 

@@ -347,9 +347,28 @@ export class AgentWorker {
     const budget = new ContextBudget();
     if (extraContext) budget.add('caller-extra', extraContext.length);
     if (task.agentType === 'frontend') {
-      const frontendRulesPath = nodePath.join(workspaceDir, 'design-system', 'frontend-rules.md');
-      try {
-        const rulesRaw = await fs.readFile(frontendRulesPath, 'utf-8');
+      // The rules file lives in the project root (committed alongside source).
+      // Prefer the project root path so we don't depend on the per-session
+      // workspace mirror (which is currently created empty by sessions.ts and
+      // would always miss). Fall back to the session subdir for the case
+      // where the Design Agent wrote a session-local override.
+      const projectRoot = await this.getProjectWorkspaceDir(task.projectId);
+      const candidates = [
+        nodePath.join(projectRoot,  'design-system', 'frontend-rules.md'),
+        nodePath.join(workspaceDir, 'design-system', 'frontend-rules.md'),
+      ];
+      let rulesRaw: string | null = null;
+      let resolvedFrom: string | null = null;
+      for (const candidate of candidates) {
+        try {
+          rulesRaw = await fs.readFile(candidate, 'utf-8');
+          resolvedFrom = candidate;
+          break;
+        } catch {
+          // try next candidate
+        }
+      }
+      if (rulesRaw !== null && resolvedFrom !== null) {
         const cap = env.FRONTEND_RULES_MAX_CHARS;
         let rules = rulesRaw;
         let truncated = false;
@@ -365,13 +384,15 @@ export class AgentWorker {
         }
         const rulesBlock = `\n\n## Project Frontend Rules (from design-system/frontend-rules.md)\n\n${rules}`;
         resolvedExtraContext = (resolvedExtraContext ?? '') + rulesBlock;
-        budget.add('frontend-rules', rulesBlock.length, { truncated, originalChars: rulesRaw.length });
+        budget.add('frontend-rules', rulesBlock.length, { truncated, originalChars: rulesRaw.length, resolvedFrom });
         this.logger.info(
-          { taskId: task.id, chars: rules.length, truncated },
+          { taskId: task.id, chars: rules.length, truncated, resolvedFrom },
           'Injected frontend-rules.md into Frontend agent context',
         );
-      } catch {
-        // Design Agent hasn't run yet or no rules file — continue without it
+      } else {
+        // Design Agent hasn't run yet or no rules file in either location —
+        // continue without it.
+        this.logger.debug?.({ taskId: task.id, candidates }, 'frontend-rules.md not found in any candidate path');
       }
     }
 

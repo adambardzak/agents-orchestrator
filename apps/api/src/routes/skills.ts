@@ -2,6 +2,7 @@
  * Skills REST API.
  *
  *   GET    /api/skills           — list built-in + this org's custom skills (merged)
+ *   GET    /api/skills/catalog   — read-only built-in catalog (for "fork as template" UX)
  *   GET    /api/skills/:id       — get a single custom skill (built-ins not addressable here)
  *   POST   /api/skills           — create a new custom skill in active org
  *   PATCH  /api/skills/:id       — update fields (custom only — can't edit built-ins)
@@ -15,17 +16,21 @@
  * the app — clients never type it.
  */
 import type { FastifyInstance } from 'fastify';
+import type { SkillCategory } from '@agent-orchestrator/shared';
 import { z } from 'zod';
 import { SkillService } from '../services/skills/skill-service.js';
-import { SKILL_CATALOG } from '../agents/skills.js';
+import { SKILL_CATALOG, SKILL_CATEGORIES } from '../agents/skills.js';
 
 const slugRegex = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+const categoryEnum = z.enum(SKILL_CATEGORIES as readonly string[] as [SkillCategory, ...SkillCategory[]]);
 
 const createSchema = z.object({
   slug:               z.string().min(2).max(60).regex(slugRegex, 'Slug must be lowercase a-z, 0-9, dashes'),
   name:               z.string().min(1).max(100),
   description:        z.string().max(500).optional(),
   icon:               z.string().max(80).optional(),
+  category:           categoryEnum.optional(),
   knowledgeBlock:     z.string().min(10).max(20_000),
   rules:              z.array(z.string().min(1).max(500)).max(50).optional(),
   requiredMcpServers: z.array(z.string().min(1).max(100)).max(20).optional(),
@@ -36,6 +41,7 @@ const updateSchema = z.object({
   name:               z.string().min(1).max(100).optional(),
   description:        z.string().max(500).optional(),
   icon:               z.string().max(80).nullable().optional(),
+  category:           categoryEnum.nullable().optional(),
   knowledgeBlock:     z.string().min(10).max(20_000).optional(),
   rules:              z.array(z.string().min(1).max(500)).max(50).optional(),
   requiredMcpServers: z.array(z.string().min(1).max(100)).max(20).optional(),
@@ -52,7 +58,15 @@ export async function skillRoutes(fastify: FastifyInstance): Promise<void> {
     const orgId = request.session?.activeOrganizationId;
     if (!orgId) return reply.status(403).send({ error: 'No active organization' });
     const skills = await service.listForOrg(orgId);
-    return { skills };
+    return { skills, categories: SKILL_CATEGORIES };
+  });
+
+  // ── GET /api/skills/catalog ────────────────────────────────────────────
+  // Read-only built-in catalog. UI uses this to power "fork as template" —
+  // pre-fills the create form with a built-in's content under a new slug.
+  fastify.get('/api/skills/catalog', async (request) => {
+    await request.requireUser();
+    return { skills: SKILL_CATALOG, categories: SKILL_CATEGORIES };
   });
 
   // ── GET /api/skills/:id ────────────────────────────────────────────────

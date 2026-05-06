@@ -11,7 +11,7 @@
  * without forking the codebase.
  */
 import type { Pool } from 'pg';
-import type { AgentSkill } from '@agent-orchestrator/shared';
+import type { AgentSkill, SkillCategory } from '@agent-orchestrator/shared';
 import { SKILL_CATALOG, getSkillById } from '../../agents/skills.js';
 
 export interface CustomSkillRow extends AgentSkill {
@@ -38,6 +38,7 @@ export interface CreateSkillInput {
   name:               string;
   description?:       string;
   icon?:              string;
+  category?:          SkillCategory;
   knowledgeBlock:     string;
   rules?:             string[];
   requiredMcpServers?: string[];
@@ -48,6 +49,7 @@ export interface UpdateSkillInput {
   name?:              string;
   description?:       string;
   icon?:              string | null;
+  category?:          SkillCategory | null;
   knowledgeBlock?:    string;
   rules?:             string[];
   requiredMcpServers?: string[];
@@ -110,9 +112,9 @@ export class SkillService {
   async create(input: CreateSkillInput): Promise<CustomSkillRow> {
     const { rows: [r] } = await this.pool.query(
       `INSERT INTO skills
-         (organization_id, created_by, slug, name, description, icon,
+         (organization_id, created_by, slug, name, description, icon, category,
           knowledge_block, rules, required_mcp_servers, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11)
        RETURNING *`,
       [
         input.organizationId,
@@ -121,6 +123,7 @@ export class SkillService {
         input.name,
         input.description ?? '',
         input.icon ?? null,
+        input.category ?? null,
         input.knowledgeBlock,
         JSON.stringify(input.rules ?? []),
         JSON.stringify(input.requiredMcpServers ?? []),
@@ -138,6 +141,7 @@ export class SkillService {
     if (input.name              !== undefined) { sets.push(`name = $${i++}`);                 params.push(input.name); }
     if (input.description       !== undefined) { sets.push(`description = $${i++}`);          params.push(input.description); }
     if (input.icon              !== undefined) { sets.push(`icon = $${i++}`);                 params.push(input.icon); }
+    if (input.category          !== undefined) { sets.push(`category = $${i++}`);             params.push(input.category); }
     if (input.knowledgeBlock    !== undefined) { sets.push(`knowledge_block = $${i++}`);      params.push(input.knowledgeBlock); }
     if (input.rules             !== undefined) { sets.push(`rules = $${i++}::jsonb`);         params.push(JSON.stringify(input.rules)); }
     if (input.requiredMcpServers!== undefined) { sets.push(`required_mcp_servers = $${i++}::jsonb`); params.push(JSON.stringify(input.requiredMcpServers)); }
@@ -161,6 +165,8 @@ export class SkillService {
   // ── private ────────────────────────────────────────────────────────────────
   private mapRow(r: Record<string, unknown>): CustomSkillRow {
     const slug = String(r['slug']);
+    const icon = (r['icon'] as string | null) ?? undefined;
+    const category = (r['category'] as SkillCategory | null) ?? undefined;
     return {
       id:                 `skill:${slug}`,
       dbId:               String(r['id']),
@@ -169,6 +175,8 @@ export class SkillService {
       knowledgeBlock:     String(r['knowledge_block']),
       rules:              (r['rules'] as string[]) ?? [],
       requiredMcpServers: (r['required_mcp_servers'] as string[]) ?? [],
+      ...(icon     !== undefined ? { icon }     : {}),
+      ...(category !== undefined ? { category } : {}),
       organizationId:     String(r['organization_id']),
       createdBy:          (r['created_by'] as string | null) ?? null,
       enabled:            Boolean(r['enabled']),

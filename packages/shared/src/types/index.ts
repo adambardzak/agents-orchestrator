@@ -32,6 +32,18 @@ export type AgentType =
 // Agent definitions
 // ============================================================
 
+export type SkillCategory =
+  | 'frontend'
+  | 'backend'
+  | 'devops'
+  | 'database'
+  | 'ai-llm'
+  | 'testing'
+  | 'security'
+  | 'seo'
+  | 'tooling'
+  | 'other';
+
 export interface AgentSkill {
   id: string;
   name: string;
@@ -39,6 +51,10 @@ export interface AgentSkill {
   knowledgeBlock: string;
   requiredMcpServers: string[];
   rules: string[];
+  /** Optional iconify id (e.g. "i-ph-code-light"). */
+  icon?: string;
+  /** Coarse grouping for catalog UI. */
+  category?: SkillCategory;
 }
 
 export interface AgentTriggers {

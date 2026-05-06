@@ -8,12 +8,20 @@ import type { AgentSkill } from '@agent-orchestrator/shared';
  *  - A knowledge block (appended to system prompt)
  *  - Additional rules (merged with agent rules)
  *  - Required MCP servers (merged with allowed servers)
+ *  - A coarse category for catalog grouping
+ *  - An iconify id for visual identification
+ *
+ * Users can override a built-in by creating a custom skill with the same slug
+ * (resulting in the same id `skill:<slug>`); the DB row wins in that case.
  */
 export const SKILL_CATALOG: AgentSkill[] = [
+  // ── Frontend ────────────────────────────────────────────────────────────
   {
     id: 'skill:typescript-strict',
     name: 'TypeScript Strict',
     description: 'TypeScript strict mode patterns, type safety, no-any discipline.',
+    icon: 'i-ph-code-light',
+    category: 'frontend',
     knowledgeBlock: `### TypeScript Strict Mode Patterns
 
 Always configure tsconfig with: "strict": true, "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true.
@@ -43,6 +51,8 @@ Zod validation: always parse external inputs (\`z.parse()\` or \`safeParse()\`),
     id: 'skill:nuxt3-patterns',
     name: 'Nuxt 3 Patterns',
     description: 'Nuxt 3 composables, auto-imports, SSR/CSR, state management.',
+    icon: 'i-ph-mountains-light',
+    category: 'frontend',
     knowledgeBlock: `### Nuxt 3 Development Patterns
 
 Auto-imports: all composables in \`composables/\`, components in \`components/\`, and utils in \`utils/\` are auto-imported. Never import them manually.
@@ -68,9 +78,168 @@ SSR considerations: \`import.meta.server\` / \`import.meta.client\` guards for p
   },
 
   {
+    id: 'skill:vue3-composition',
+    name: 'Vue 3 Composition API',
+    description: 'Reactivity primitives, composables, lifecycle, script setup.',
+    icon: 'i-ph-atom-light',
+    category: 'frontend',
+    knowledgeBlock: `### Vue 3 Composition API Patterns
+
+\`<script setup lang="ts">\` is the preferred syntax — top-level bindings are auto-exposed to template, props/emits use compiler macros.
+
+Reactivity:
+  - \`ref()\` for primitives and replacements; access via \`.value\` in JS, auto-unwrapped in template
+  - \`reactive()\` for objects (deep proxy) — never destructure (loses reactivity); use \`toRefs\`
+  - \`computed()\` for derived state with caching; pass getter/setter for writable computeds
+  - \`shallowRef\` / \`shallowReactive\` for large frozen data (e.g. third-party instances)
+
+Watchers:
+  - \`watch(source, cb)\` for explicit deps; supports arrays of sources
+  - \`watchEffect()\` auto-tracks reactive reads inside the callback
+  - \`{ immediate: true }\` to run on mount; \`{ flush: 'post' }\` after DOM update; \`{ deep: true }\` for nested
+
+Props/emits (script setup):
+  - \`const props = defineProps<{ foo: string; bar?: number }>()\`
+  - \`const emit = defineEmits<{ change: [value: string] }>()\`
+  - \`defineModel<T>()\` for two-way binding (Vue 3.4+)
+
+Lifecycle: \`onMounted\`, \`onUnmounted\`, \`onUpdated\` from 'vue'. No this-context — use composables for shared logic.
+
+Composables: pure functions named \`useXxx()\` returning reactive state + methods. Encapsulate side effects with \`onMounted\`/\`onUnmounted\`.`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS use <script setup lang="ts"> — never Options API in new code',
+      'NEVER destructure reactive() — use toRefs() or computed()',
+      'Extract reusable logic into useXxx() composables',
+      'Type props/emits via generic arguments to defineProps/defineEmits',
+    ],
+  },
+
+  {
+    id: 'skill:react-modern',
+    name: 'React 18+ Patterns',
+    description: 'Hooks, Server Components, Suspense, transitions, performance.',
+    icon: 'i-ph-atom-light',
+    category: 'frontend',
+    knowledgeBlock: `### React 18+ Modern Patterns
+
+Hooks rules: only call at top level of components/hooks; only call from React functions; rule names start with \`use\`.
+
+State:
+  - \`useState\` for local state; pass updater function for state derived from previous (\`setX(x => x + 1)\`)
+  - \`useReducer\` for complex state with multiple sub-values or transitions
+  - Lift state up; colocate state with consumers; never store derived data in state — compute it
+
+Effects:
+  - \`useEffect\` is for synchronizing with external systems, NOT for transformations (use derived values)
+  - Always include all reactive deps; let \`react-hooks/exhaustive-deps\` lint
+  - Cleanup function for subscriptions, timers, fetch abort controllers
+  - \`useLayoutEffect\` only for DOM measurements before paint
+
+Performance:
+  - \`useMemo\` / \`useCallback\` only when measured benefit (referential equality crossing memo boundary)
+  - \`memo()\` for components rendered with same props in hot lists
+  - \`useTransition\` for non-urgent updates (filtering large lists), \`useDeferredValue\` to defer prop updates
+  - \`startTransition\` outside components for marking updates as non-urgent
+
+Server Components (RSC, Next.js App Router):
+  - Default to server components; add \`'use client'\` only at the leaf where state/effects begin
+  - Server components can be async — \`await fetch()\` directly; results stream via Suspense
+  - Pass server data as props; never serialize functions across the boundary
+
+Forms: \`useFormStatus\` for pending state, \`useActionState\` (React 19) for action results, \`useOptimistic\` for optimistic UI.`,
+    requiredMcpServers: [],
+    rules: [
+      'NEVER store derived values in useState — compute or useMemo',
+      'ALWAYS list all reactive deps in useEffect',
+      'Default to server components in Next.js App Router; add "use client" at leaves',
+      'Use useTransition / useDeferredValue for non-urgent updates',
+    ],
+  },
+
+  {
+    id: 'skill:tailwind-design-system',
+    name: 'Tailwind Design System',
+    description: 'Tailwind utility-first patterns, design tokens, responsive design.',
+    icon: 'i-ph-paint-brush-light',
+    category: 'frontend',
+    knowledgeBlock: `### Tailwind + Design System Patterns
+
+Design tokens: ALWAYS use CSS custom properties from \`tokens.css\` via Tailwind config. Never hardcode hex colors or pixel values.
+
+Utility composition: extract repeated utility combinations into components. Use \`@apply\` sparingly — only in base styles, never in component-scoped CSS.
+
+Responsive: mobile-first with \`sm:\`, \`md:\`, \`lg:\`, \`xl:\` prefixes. Use \`container\` with \`mx-auto\` and \`px-4\`.
+
+Dark mode: use \`dark:\` prefix variants. Base colors on semantic CSS variables (--color-bg, --color-text) that flip in dark mode.
+
+Typography: use \`text-sm/base/lg/xl\` from scale — never arbitrary values like \`text-[15px]\`. Heading/body fonts from font-heading/font-body classes.
+
+State styles: always define \`hover:\`, \`focus:\`, \`disabled:\`, \`active:\` states. Use \`ring\` utilities for focus indicators (not outline).
+
+Spacing: use 4px base grid (p-1=4px, p-4=16px, p-8=32px). Never mix spacing systems.
+
+Tailwind v4 specifics: CSS-first config via \`@theme\` directive in CSS; \`@import "tailwindcss"\` replaces the three @tailwind directives; no PostCSS plugin needed.`,
+    requiredMcpServers: [],
+    rules: [
+      'NEVER hardcode colors — use CSS variables from tokens.css',
+      'ALWAYS define hover, focus, and disabled states',
+      'Use responsive prefixes (sm:, md:, lg:) — never media queries in JS',
+      'Extract repeated utilities into components, not @apply',
+    ],
+  },
+
+  {
+    id: 'skill:accessibility-wcag',
+    name: 'Accessibility (WCAG 2.2)',
+    description: 'Semantic HTML, ARIA, keyboard nav, screen reader patterns.',
+    icon: 'i-ph-eye-light',
+    category: 'frontend',
+    knowledgeBlock: `### Accessibility (WCAG 2.2 AA)
+
+Semantic HTML first — ARIA second. Use \`<button>\`, \`<a>\`, \`<nav>\`, \`<main>\`, \`<header>\`, \`<footer>\` for their meaning. Never \`<div onClick>\` for interactive elements.
+
+Keyboard:
+  - All interactive elements must be focusable (\`tabindex="0"\` only when needed; never positive tabindex)
+  - Visible focus indicators with min 3:1 contrast (\`focus-visible:ring-2\`)
+  - ESC closes modals/menus, arrow keys navigate within composite widgets (menubar, listbox, tabs)
+  - Skip link as first focusable: \`<a href="#main">Skip to content</a>\`
+
+Forms:
+  - Every \`<input>\` has a \`<label>\` (use \`htmlFor\`/\`for\`); never rely on placeholder as label
+  - Group related fields with \`<fieldset>\` + \`<legend>\`
+  - Errors via \`aria-describedby\` linking to error message; \`aria-invalid="true"\` on bad fields
+  - Required fields: \`required\` attribute + visual indicator (not just color)
+
+Color & contrast:
+  - Text: 4.5:1 (3:1 for >=18pt or 14pt bold); UI components and graphics: 3:1
+  - Never use color alone to convey meaning — pair with icon or text
+
+Screen readers:
+  - \`<img alt="...">\` describes meaning (or empty \`alt=""\` if decorative)
+  - Live regions: \`aria-live="polite"\` for status, \`"assertive"\` for errors
+  - Hide decorative-only with \`aria-hidden="true"\`; visually hide but expose with \`.sr-only\` class
+
+Motion: respect \`prefers-reduced-motion\` — disable parallax, autoplay, large transforms.
+
+Testing: axe DevTools, Lighthouse a11y audit, manual keyboard pass, screen reader (VoiceOver/NVDA) on critical flows.`,
+    requiredMcpServers: [],
+    rules: [
+      'Use semantic HTML elements before reaching for ARIA',
+      'Every form input must have a programmatically associated label',
+      'Visible focus indicator on all interactive elements (3:1 contrast min)',
+      'Never convey meaning with color alone',
+      'Respect prefers-reduced-motion',
+    ],
+  },
+
+  // ── Backend ─────────────────────────────────────────────────────────────
+  {
     id: 'skill:fastify-patterns',
     name: 'Fastify Patterns',
     description: 'Fastify plugins, decorators, schema validation, lifecycle hooks.',
+    icon: 'i-ph-lightning-light',
+    category: 'backend',
     knowledgeBlock: `### Fastify Development Patterns
 
 Plugin architecture: every feature is a plugin via \`fastify-plugin\` (fp). Plugins decorated with \`fp()\` share state with the parent scope; without \`fp()\` they are encapsulated.
@@ -94,9 +263,133 @@ Performance: register routes with \`schema\` option — Fastify uses fast-json-s
   },
 
   {
+    id: 'skill:rest-api-design',
+    name: 'REST API Design',
+    description: 'Resource modeling, status codes, pagination, versioning, idempotency.',
+    icon: 'i-ph-tree-structure-light',
+    category: 'backend',
+    knowledgeBlock: `### REST API Design Principles
+
+Resource modeling:
+  - Nouns, not verbs: \`/api/orders\` not \`/api/getOrders\`
+  - Plural collection + singular id: \`GET /orders\`, \`GET /orders/:id\`
+  - Hierarchy mirrors ownership: \`/orgs/:id/projects/:pid\`; flatten if non-trivial nesting
+
+HTTP methods:
+  - GET: safe + idempotent, never has body, never mutates
+  - POST: create, non-idempotent (use Idempotency-Key header for retries)
+  - PUT: full replace, idempotent
+  - PATCH: partial update, idempotent
+  - DELETE: idempotent (404 OR 204 on already-deleted is fine, be consistent)
+
+Status codes (use the right one):
+  - 200 OK with body / 204 No Content for empty success
+  - 201 Created with \`Location\` header pointing to new resource
+  - 400 Bad Request (validation), 401 Unauthorized (no auth), 403 Forbidden (auth but not allowed)
+  - 404 Not Found, 409 Conflict (uniqueness), 422 Unprocessable Entity (semantic validation)
+  - 429 Too Many Requests (with \`Retry-After\` header), 5xx for server errors only
+
+Pagination:
+  - Cursor-based for large/infinite lists: \`?cursor=xxx&limit=50\` → return \`{ items, nextCursor }\`
+  - Offset only for small bounded lists or admin tables: \`?page=1&pageSize=20\`
+  - Always return \`limit\` you actually used (caps protect server)
+
+Versioning: URL prefix (\`/api/v1\`) is simplest; header-based (\`Accept: application/vnd.api.v2+json\`) is purer but harder to debug. Avoid breaking changes by adding fields, not removing.
+
+Errors: return JSON \`{ error: { code, message, details? } }\`. Code is machine-readable enum, message is human, details is field-level for 400/422.
+
+Authentication: prefer short-lived bearer tokens or session cookies (HttpOnly, Secure, SameSite=Lax). Never put tokens in URLs.
+
+Idempotency: for POSTs that may be retried, accept \`Idempotency-Key\` header; store key + response for 24h; return same response for repeat key.`,
+    requiredMcpServers: [],
+    rules: [
+      'Use plural nouns for collections; singular for items by id',
+      'Match HTTP method semantics: GET safe, PUT/PATCH/DELETE idempotent',
+      'Cursor pagination for large lists; never load unbounded data',
+      'Return structured error objects with stable error codes',
+      'Accept Idempotency-Key on retriable POST endpoints',
+    ],
+  },
+
+  {
+    id: 'skill:bullmq-patterns',
+    name: 'BullMQ Patterns',
+    description: 'BullMQ job queue patterns, retry logic, dead-letter queues.',
+    icon: 'i-ph-queue-light',
+    category: 'backend',
+    knowledgeBlock: `### BullMQ Queue Patterns
+
+Job definition: use typed \`JobData\` interfaces. Always include idempotency keys (\`jobId\`) to prevent duplicate processing.
+
+Retry strategy: exponential backoff (\`type: 'exponential', delay: 1000\`). Set \`attempts: 3\` for transient failures, \`attempts: 1\` for non-retriable jobs.
+
+Concurrency: set \`concurrency\` on Worker based on resource constraints. Use \`limiter\` to rate-limit external API calls.
+
+Events: listen to \`completed\`, \`failed\`, \`progress\` on Queue (not Worker) for cross-process observability.
+
+Dead letter: use \`removeOnFail: false\` + monitor failed jobs. Implement \`onFailed\` handler for alerting.
+
+Flow/dependencies: use \`FlowProducer\` for parent-child job dependencies. Children complete before parent.
+
+Cleanup: \`removeOnComplete: { count: 100 }\` to prevent Redis memory growth. Run \`queue.obliterate()\` in tests.`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS set jobId for idempotent job deduplication',
+      'Use exponential backoff for retry strategy',
+      'Set removeOnComplete to prevent Redis memory growth',
+      'Listen to Queue events, not Worker events, for observability',
+    ],
+  },
+
+  {
+    id: 'skill:python-typing',
+    name: 'Modern Python Typing',
+    description: 'Type hints, Pydantic, async patterns, packaging.',
+    icon: 'i-ph-snake-light',
+    category: 'backend',
+    knowledgeBlock: `### Modern Python Patterns (3.11+)
+
+Typing:
+  - Always type hints on public functions (\`def f(x: int) -> str:\`)
+  - PEP 604 union syntax: \`int | None\` (drop \`Optional[]\`/\`Union[]\` in new code)
+  - \`TypedDict\` for structured dicts; \`dataclass\` or Pydantic \`BaseModel\` for objects
+  - \`Self\` (PEP 673) for fluent return types; \`Never\` for unreachable
+  - Generic syntax: PEP 695 (\`def first[T](xs: list[T]) -> T:\`) on 3.12+
+
+Pydantic v2:
+  - \`BaseModel\` with \`model_config = ConfigDict(frozen=True)\` for immutable DTOs
+  - \`@field_validator('x')\` and \`@model_validator(mode='after')\` for validation
+  - \`.model_dump()\` / \`.model_dump_json()\` instead of \`.dict()\`/\`.json()\`
+  - \`TypeAdapter\` for ad-hoc validation outside models
+
+Async:
+  - \`asyncio.TaskGroup\` (3.11+) for structured concurrency — replaces \`gather()\` boilerplate
+  - \`asyncio.timeout()\` context manager for cancellation
+  - Never call sync blocking I/O from async — use \`asyncio.to_thread()\` or aiohttp/httpx
+
+Packaging:
+  - \`pyproject.toml\` is the single source of truth (PEP 621)
+  - Use \`uv\` or \`pdm\` for fast resolver; \`ruff\` for lint+format (replaces flake8/black/isort)
+  - Lock dependencies (\`uv.lock\`, \`pdm.lock\`) — commit them
+
+Errors: derive custom exceptions from \`Exception\`; chain with \`raise X from y\` to preserve cause.`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS add type hints on public functions',
+      'Use PEP 604 union syntax (X | None) over Optional[X]',
+      'Use asyncio.TaskGroup for structured concurrency on 3.11+',
+      'pyproject.toml is the single source of truth — no setup.py',
+      'Use ruff for lint+format; never mix multiple tools',
+    ],
+  },
+
+  // ── Database ────────────────────────────────────────────────────────────
+  {
     id: 'skill:postgres-optimization',
     name: 'PostgreSQL Optimization',
     description: 'Query optimization, indexes, CTEs, EXPLAIN ANALYZE, connection pooling.',
+    icon: 'i-ph-database-light',
+    category: 'database',
     knowledgeBlock: `### PostgreSQL Query Optimization
 
 Indexes: B-tree for equality/range, GIN for JSONB/arrays/full-text, partial indexes for filtered queries (\`WHERE active = true\`). Always index foreign keys and ORDER BY columns.
@@ -123,37 +416,196 @@ Migrations: always reversible (include DOWN migration). Never drop columns in sa
   },
 
   {
-    id: 'skill:tailwind-design-system',
-    name: 'Tailwind Design System',
-    description: 'Tailwind utility-first patterns, design tokens, responsive design.',
-    knowledgeBlock: `### Tailwind + Design System Patterns
+    id: 'skill:drizzle-orm',
+    name: 'Drizzle ORM',
+    description: 'Type-safe SQL with Drizzle, schema, migrations, relations.',
+    icon: 'i-ph-database-light',
+    category: 'database',
+    knowledgeBlock: `### Drizzle ORM Patterns
 
-Design tokens: ALWAYS use CSS custom properties from \`tokens.css\` via Tailwind config. Never hardcode hex colors or pixel values.
+Schema definition:
+\`\`\`typescript
+import { pgTable, uuid, text, timestamp, integer, boolean, jsonb } from 'drizzle-orm/pg-core';
 
-Utility composition: extract repeated utility combinations into components. Use \`@apply\` sparingly — only in base styles, never in component-scoped CSS.
+export const users = pgTable('users', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  email:     text('email').notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+\`\`\`
 
-Responsive: mobile-first with \`sm:\`, \`md:\`, \`lg:\`, \`xl:\` prefixes. Use \`container\` with \`mx-auto\` and \`px-4\`.
+Relations: define with \`relations()\` helper for type-safe joins via \`with: { ... }\`.
 
-Dark mode: use \`dark:\` prefix variants. Base colors on semantic CSS variables (--color-bg, --color-text) that flip in dark mode.
+Queries:
+  - \`db.select().from(users).where(eq(users.id, id)).limit(1)\` — explicit and SQL-shaped
+  - \`db.query.users.findFirst({ where: eq(...), with: { posts: true } })\` — relational query API
+  - Always use prepared statements for hot queries (\`.prepare('name')\`)
 
-Typography: use \`text-sm/base/lg/xl\` from scale — never arbitrary values like \`text-[15px]\`. Heading/body fonts from font-heading/font-body classes.
+Migrations:
+  - \`drizzle-kit generate\` produces SQL files in \`drizzle/\` — always commit
+  - \`drizzle-kit push\` only for prototyping — never in CI/prod
+  - \`drizzle-kit migrate\` runs SQL files in order; track applied via \`__drizzle_migrations\` table
 
-State styles: always define \`hover:\`, \`focus:\`, \`disabled:\`, \`active:\` states. Use \`ring\` utilities for focus indicators (not outline).
+Transactions: \`await db.transaction(async (tx) => { ... })\` — pass \`tx\` to all calls inside; throw to roll back.
 
-Spacing: use 4px base grid (p-1=4px, p-4=16px, p-8=32px). Never mix spacing systems.`,
-    requiredMcpServers: [],
+Type inference: \`type User = typeof users.$inferSelect\`; \`type NewUser = typeof users.$inferInsert\`.
+
+Don'ts: never \`db.select().from(table)\` without \`limit\` on large tables; never construct WHERE strings — use \`eq\`, \`and\`, \`or\`, \`inArray\`, \`like\` builders.`,
+    requiredMcpServers: ['postgres'],
     rules: [
-      'NEVER hardcode colors — use CSS variables from tokens.css',
-      'ALWAYS define hover, focus, and disabled states',
-      'Use responsive prefixes (sm:, md:, lg:) — never media queries in JS',
-      'Extract repeated utilities into components, not @apply',
+      'NEVER use drizzle-kit push in CI/production — generate + migrate only',
+      'ALWAYS commit generated migration SQL files',
+      'Use prepared statements for queries on hot paths',
+      'Use the relational query API (db.query.x.findX) for nested data',
     ],
   },
 
   {
+    id: 'skill:prisma-orm',
+    name: 'Prisma ORM',
+    description: 'Schema-first ORM, migrations, type-safe queries, performance.',
+    icon: 'i-ph-database-light',
+    category: 'database',
+    knowledgeBlock: `### Prisma ORM Patterns
+
+Schema (\`schema.prisma\`):
+\`\`\`prisma
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  posts     Post[]
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+\`\`\`
+
+Migrations:
+  - \`prisma migrate dev --name xxx\` for local dev (creates SQL + applies)
+  - \`prisma migrate deploy\` in CI/prod — applies pending migrations only
+  - Never \`prisma db push\` outside prototyping
+
+Queries:
+  - Avoid N+1 with \`include\` or \`select\` for nested relations
+  - \`select\` to fetch only required fields (huge perf win)
+  - \`take\` for pagination, \`cursor\` for keyset pagination on large lists
+  - \`prisma.$transaction([...])\` for atomic batch ops; \`$transaction(async tx => {})\` for interactive
+
+Performance:
+  - Connection pooling via PgBouncer or Prisma Accelerate (serverless) — set \`?pgbouncer=true&connection_limit=1\` for serverless
+  - Use \`prisma.$queryRaw\` for complex queries with index hints
+  - Beware of \`findMany\` without \`take\` — always paginate
+
+Type generation: \`prisma generate\` after every schema change. Output goes to \`@prisma/client\`. Commit \`schema.prisma\` and migrations; never commit generated client.
+
+Soft deletes: model with \`deletedAt: DateTime?\` + middleware filtering — Prisma has no built-in soft delete.`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS use select to limit fetched fields on large rows',
+      'NEVER findMany without take/cursor — paginate everything',
+      'Use prisma migrate (not db push) for any tracked environment',
+      'Avoid N+1: use include/select for nested data, never loop with findUnique',
+    ],
+  },
+
+  // ── DevOps ──────────────────────────────────────────────────────────────
+  {
+    id: 'skill:docker-compose',
+    name: 'Docker & Compose',
+    description: 'Multi-stage builds, image layering, Compose for local dev, healthchecks.',
+    icon: 'i-ph-cube-light',
+    category: 'devops',
+    knowledgeBlock: `### Docker & Docker Compose Patterns
+
+Dockerfile:
+  - Multi-stage builds: \`FROM node:20 AS build\` → \`FROM node:20-slim AS runtime\`; copy only artifacts
+  - Pin base image versions (\`node:20.11.0-alpine\`) — never \`:latest\` in production
+  - Order layers from least to most frequently changing: \`COPY package.json\` → \`RUN install\` → \`COPY src\`
+  - Run as non-root: \`USER node\` after install
+  - Use \`.dockerignore\` (node_modules, .git, dist, .env)
+  - \`HEALTHCHECK\` for container orchestrators
+  - Single process per container; \`CMD ["node", "server.js"]\` (exec form, not shell)
+
+docker-compose.yml:
+  - Use \`depends_on\` with \`condition: service_healthy\` to gate startup
+  - Named volumes for stateful data (\`pgdata:/var/lib/postgresql/data\`); bind mounts only for dev source
+  - Networks: explicit named networks > default \`bridge\`
+  - \`restart: unless-stopped\` for services that should survive reboots
+  - Env files: \`env_file: .env\` for non-secret config; secrets via Docker secrets or external vault
+
+Image size:
+  - Use \`-slim\` or \`-alpine\` base images when possible
+  - Combine RUN steps with \`&&\` and clean caches: \`apt-get update && apt-get install -y x && rm -rf /var/lib/apt/lists/*\`
+  - Scan with Trivy or Snyk; remove dev dependencies in final stage
+
+BuildKit: enable with \`DOCKER_BUILDKIT=1\` for parallel builds, cache mounts (\`RUN --mount=type=cache,target=/root/.npm\`), and secrets (\`--mount=type=secret\`).`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS use multi-stage builds for compiled languages',
+      'NEVER use :latest tag — pin specific versions',
+      'Run containers as non-root user',
+      'Use HEALTHCHECK + depends_on condition for ordered startup',
+      'Single process per container — no init scripts spawning multiple services',
+    ],
+  },
+
+  {
+    id: 'skill:kubernetes-basics',
+    name: 'Kubernetes Basics',
+    description: 'Pods, Deployments, Services, ConfigMaps, Secrets, Ingress.',
+    icon: 'i-ph-network-light',
+    category: 'devops',
+    knowledgeBlock: `### Kubernetes Workload Patterns
+
+Core resources:
+  - **Pod**: smallest unit; one+ containers sharing network/volumes. Don't create directly — use a controller.
+  - **Deployment**: declarative rolling updates for stateless apps; manages ReplicaSets.
+  - **StatefulSet**: stable identity + ordered startup for stateful apps (DBs).
+  - **DaemonSet**: one pod per node (logging, monitoring agents).
+  - **Job / CronJob**: run-to-completion / scheduled tasks.
+
+Service types:
+  - **ClusterIP**: internal only (default)
+  - **NodePort**: exposes on each node IP at static port (rarely used directly)
+  - **LoadBalancer**: cloud LB pointing at the service
+  - **ExternalName**: DNS CNAME to external host
+
+Config & secrets:
+  - **ConfigMap**: non-secret config; mount as files or env vars
+  - **Secret**: base64-encoded sensitive data; ALWAYS use a real secrets manager (Sealed Secrets, External Secrets, Vault) in production
+  - Never bake secrets into images
+
+Resource limits & requests:
+  - \`requests\`: scheduler reservation (always set)
+  - \`limits\`: hard cap; CPU throttles, memory OOMKills
+  - Set both for production workloads; ratio of limits:requests determines QoS class
+
+Health probes:
+  - **livenessProbe**: restart pod if failing (only for stuck-process detection)
+  - **readinessProbe**: remove from Service endpoints if failing (use for dependency checks)
+  - **startupProbe**: gate liveness/readiness during slow startup
+
+Networking: NetworkPolicy for ingress/egress rules; Ingress controller (nginx, Traefik) for HTTP routing.
+
+Rolling update strategy: \`maxSurge\` and \`maxUnavailable\` control rollout speed. Use PodDisruptionBudget for graceful drains.
+
+GitOps: declare desired state in Git; reconcile with ArgoCD or Flux. Never \`kubectl apply\` ad-hoc in production.`,
+    requiredMcpServers: [],
+    rules: [
+      'NEVER create Pods directly — use Deployment/StatefulSet/Job controllers',
+      'ALWAYS set both resource requests and limits for production workloads',
+      'Use readinessProbe to gate traffic; livenessProbe only for hung-process recovery',
+      'Use a real secrets manager in production — k8s Secret alone is base64, not encrypted',
+      'Manage cluster state via GitOps (ArgoCD/Flux), not kubectl apply',
+    ],
+  },
+
+  // ── Testing ─────────────────────────────────────────────────────────────
+  {
     id: 'skill:testing-patterns',
     name: 'Testing Patterns',
     description: 'Vitest unit tests, testing-library integration tests, test structure.',
+    icon: 'i-ph-test-tube-light',
+    category: 'testing',
     knowledgeBlock: `### Testing Patterns (Vitest + Testing Library)
 
 Test structure: Arrange-Act-Assert. One assertion focus per test. Describe blocks for grouping related tests.
@@ -182,9 +634,160 @@ Coverage: aim for >80% on business logic. Never test implementation details (pri
   },
 
   {
+    id: 'skill:playwright-e2e',
+    name: 'Playwright E2E',
+    description: 'End-to-end tests with Playwright: locators, fixtures, network, parallelism.',
+    icon: 'i-ph-play-circle-light',
+    category: 'testing',
+    knowledgeBlock: `### Playwright E2E Patterns
+
+Locators (the right way to find elements):
+  - Prefer user-facing locators: \`getByRole\`, \`getByLabel\`, \`getByPlaceholder\`, \`getByText\`
+  - \`getByTestId('foo')\` only when nothing else fits — couples test to implementation
+  - NEVER CSS selectors like \`.btn-primary\` for tests; they break on refactor
+  - Locators auto-wait — no \`waitForSelector\` needed before \`.click()\`
+
+Assertions:
+  - \`await expect(page.getByRole('button')).toBeVisible()\` — auto-retries with timeout
+  - \`expect.poll()\` for non-locator state polling
+  - Soft assertions: \`expect.soft(...)\` continues on fail (group related checks)
+
+Fixtures:
+  - \`test.extend\` for project-specific fixtures (logged-in user, seeded DB, etc.)
+  - \`test.beforeEach\` runs in same worker; use fixtures over beforeEach for cleaner isolation
+
+Network:
+  - \`page.route()\` to mock/modify requests: \`page.route('**/api/x', r => r.fulfill({ body: '{}' }))\`
+  - \`page.waitForResponse(/\\/api\\/foo/)\` to assert/extract API responses
+
+Parallelism:
+  - Each test file runs in its own worker by default; use \`test.describe.configure({ mode: 'serial' })\` for shared state
+  - \`fullyParallel: true\` in config to parallelize within files too
+  - \`storageState\` to share auth across tests without re-login
+
+Tracing & debugging:
+  - \`--trace on\` in CI to capture trace.zip for failures (open with \`npx playwright show-trace\`)
+  - \`--ui\` mode for local dev — time-travel through actions
+  - \`page.pause()\` drops into Playwright Inspector
+
+CI:
+  - Use official Docker image (\`mcr.microsoft.com/playwright:v1.x.x-jammy\`) with browsers pre-installed
+  - Shard tests across machines: \`--shard 1/4\``,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS use user-facing locators (getByRole/getByLabel/getByText) over CSS selectors',
+      'Locators auto-wait — never add manual waitForSelector before actions',
+      'Use storageState fixtures to skip login in tests that need auth',
+      'Enable --trace on in CI for post-mortem debugging',
+    ],
+  },
+
+  // ── Security ────────────────────────────────────────────────────────────
+  {
+    id: 'skill:oauth-flows',
+    name: 'OAuth 2.1 / OIDC',
+    description: 'Authorization Code + PKCE, refresh tokens, OIDC ID tokens, security pitfalls.',
+    icon: 'i-ph-shield-check-light',
+    category: 'security',
+    knowledgeBlock: `### OAuth 2.1 + OpenID Connect
+
+Use **Authorization Code + PKCE** for all clients (SPAs, native, server). Implicit flow is dead — never use it. Resource Owner Password Credentials is dead too.
+
+Flow (browser-based):
+1. Client generates \`code_verifier\` (random 43-128 char string) → \`code_challenge = base64url(sha256(code_verifier))\`
+2. Redirect to authorize endpoint with: \`response_type=code\`, \`client_id\`, \`redirect_uri\`, \`code_challenge\`, \`code_challenge_method=S256\`, \`state\`, \`scope\`
+3. User authenticates → IdP redirects back with \`?code=xxx&state=yyy\`
+4. Validate \`state\` matches what you sent (CSRF protection)
+5. POST to token endpoint with \`code\`, \`code_verifier\`, \`client_id\`, \`redirect_uri\` → get \`access_token\` + \`refresh_token\` + (OIDC) \`id_token\`
+
+Token storage:
+  - **Server-side sessions** (HttpOnly Secure SameSite=Lax cookie) — best for first-party web apps
+  - **Memory only** for SPAs that absolutely need client-side tokens; refresh in iframe via silent renewal
+  - **NEVER localStorage** for access tokens — XSS exfiltration risk
+
+OIDC ID tokens (JWT):
+  - Validate signature against IdP JWKS (\`jwks_uri\` from \`/.well-known/openid-configuration\`)
+  - Verify \`iss\`, \`aud\`, \`exp\`, \`nonce\` (matches what you sent in auth request)
+  - ID token = identity assertion; access token = API authorization. Don't confuse them.
+
+Refresh tokens:
+  - Rotate on every use (server returns new RT, invalidates old)
+  - Bind to client + use one-time-use detection to catch leaks
+  - Long-lived only with refresh token rotation; otherwise short like access tokens
+
+Scopes: minimal least-privilege. \`openid\` required for OIDC; \`offline_access\` for refresh tokens; custom scopes for resource-specific permissions.
+
+PKCE for confidential clients too (defense in depth) — RFC 9700 (OAuth 2.1) requires it for everyone.
+
+Common mistakes:
+  - Skipping \`state\` validation → CSRF
+  - Not validating ID token signature → identity spoofing
+  - Putting tokens in URLs → leak via referrer/logs
+  - Using implicit flow → token in fragment, no client auth`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS use Authorization Code + PKCE — never implicit flow',
+      'ALWAYS validate state parameter on callback (CSRF protection)',
+      'Store access tokens in HttpOnly cookies, never localStorage',
+      'Validate ID token signature, iss, aud, exp, nonce',
+      'Rotate refresh tokens on every use with one-time-use detection',
+    ],
+  },
+
+  {
+    id: 'skill:security-headers',
+    name: 'Web Security Headers',
+    description: 'CSP, HSTS, COOP/COEP, X-Frame-Options, secure cookies.',
+    icon: 'i-ph-lock-light',
+    category: 'security',
+    knowledgeBlock: `### Web Security Headers Cheatsheet
+
+**Content-Security-Policy (CSP)** — strongest XSS defense:
+  - Strict starting point: \`default-src 'self'; script-src 'self' 'strict-dynamic' 'nonce-{random}'; object-src 'none'; base-uri 'self'\`
+  - Nonce-based or hash-based — never \`'unsafe-inline'\` for scripts
+  - Use \`Report-To\` + \`report-uri\` to collect violations before enforcing
+
+**Strict-Transport-Security (HSTS)**: \`max-age=63072000; includeSubDomains; preload\` — 2 years, all subdomains, eligible for browser preload list.
+
+**X-Content-Type-Options**: \`nosniff\` (always; prevents MIME sniffing).
+
+**Referrer-Policy**: \`strict-origin-when-cross-origin\` (sensible default; sends origin to cross-origin, full URL same-origin).
+
+**Permissions-Policy**: lock down powerful features you don't use: \`geolocation=(), microphone=(), camera=()\`.
+
+**X-Frame-Options**: \`DENY\` (or use CSP \`frame-ancestors\` which is more flexible).
+
+**Cross-Origin-* (for SharedArrayBuffer / cross-origin isolation)**:
+  - \`Cross-Origin-Opener-Policy: same-origin\`
+  - \`Cross-Origin-Embedder-Policy: require-corp\`
+  - \`Cross-Origin-Resource-Policy: same-origin\` (on responses)
+
+**Cookies**:
+  - \`HttpOnly\`: not accessible to JS (always for auth cookies)
+  - \`Secure\`: HTTPS only (always)
+  - \`SameSite=Lax\` (or \`Strict\` for sensitive); \`None\` requires \`Secure\` and is for cross-site flows
+  - \`__Host-\` prefix for tightest binding (no Domain attr, must be Secure + Path=/)
+
+**CORS**: \`Access-Control-Allow-Origin\` should NEVER be \`*\` for credentialed requests — echo the validated origin and \`Vary: Origin\`.
+
+Test with: SecurityHeaders.com, Mozilla Observatory, browser DevTools network panel.`,
+    requiredMcpServers: [],
+    rules: [
+      'ALWAYS set Content-Security-Policy — never rely on input sanitization alone',
+      'NEVER use unsafe-inline in script-src — use nonces or hashes',
+      'Auth cookies: HttpOnly + Secure + SameSite=Lax (or Strict)',
+      'CORS: never wildcard for credentialed requests; echo validated origin + Vary: Origin',
+      'Enable HSTS with includeSubDomains for production HTTPS sites',
+    ],
+  },
+
+  // ── Tooling ─────────────────────────────────────────────────────────────
+  {
     id: 'skill:git-conventional-commits',
     name: 'Conventional Commits',
     description: 'Conventional commits format, branch naming, PR conventions.',
+    icon: 'i-ph-git-commit-light',
+    category: 'tooling',
     knowledgeBlock: `### Git Conventional Commits
 
 Commit format: \`type(scope): description\`
@@ -216,39 +819,66 @@ Commits should be atomic: one logical change per commit. If you can't summarize 
     ],
   },
 
+  // ── AI / LLM ────────────────────────────────────────────────────────────
   {
-    id: 'skill:bullmq-patterns',
-    name: 'BullMQ Patterns',
-    description: 'BullMQ job queue patterns, retry logic, dead-letter queues.',
-    knowledgeBlock: `### BullMQ Queue Patterns
+    id: 'skill:llm-prompting',
+    name: 'LLM Prompting & Tool Use',
+    description: 'Structured prompts, function/tool calling, RAG, output parsing.',
+    icon: 'i-ph-brain-light',
+    category: 'ai-llm',
+    knowledgeBlock: `### LLM Prompting & Tool Use
 
-Job definition: use typed \`JobData\` interfaces. Always include idempotency keys (\`jobId\`) to prevent duplicate processing.
+**System prompt structure** (top-down priority):
+1. Role / persona — one sentence
+2. Hard rules (never/always) — bullet list, capitalized verbs
+3. Capabilities & tools available
+4. Output format spec (JSON schema, markdown structure)
+5. Few-shot examples (input → output pairs)
+6. Context (RAG retrievals, memory) — last so it's most recent in attention
 
-Retry strategy: exponential backoff (\`type: 'exponential', delay: 1000\`). Set \`attempts: 3\` for transient failures, \`attempts: 1\` for non-retriable jobs.
+**Tool / function calling**:
+  - Declare tools with JSON Schema; let the model pick + supply args
+  - Validate args against schema before execution; fail fast with structured error back to model
+  - Loop: model proposes tool call → execute → return result → model decides next step or final answer
+  - Cap iterations (e.g. max 10) to avoid runaway loops
+  - Make tool descriptions verb-first and concrete: "Searches the codebase for files matching a glob pattern" not "Searches"
 
-Concurrency: set \`concurrency\` on Worker based on resource constraints. Use \`limiter\` to rate-limit external API calls.
+**Structured output**:
+  - Prefer provider-native structured output (OpenAI \`response_format: { type: 'json_schema' }\`, Anthropic tool-use)
+  - Validate with Zod after parsing — never trust the model to follow schema perfectly
+  - For Anthropic: define a single tool whose input_schema is your output schema; force \`tool_choice\`
 
-Events: listen to \`completed\`, \`failed\`, \`progress\` on Queue (not Worker) for cross-process observability.
+**RAG (retrieval-augmented generation)**:
+  - Chunk by semantic boundaries (paragraphs, headings) not fixed token windows
+  - Embed with the same model used at query time
+  - Re-rank top-N with a cross-encoder for quality
+  - Inject retrievals as \`<context>...</context>\` before user message; cite by id in answer
+  - Always include "If the context doesn't contain the answer, say you don't know" — reduces hallucination
 
-Dead letter: use \`removeOnFail: false\` + monitor failed jobs. Implement \`onFailed\` handler for alerting.
+**Token economy**:
+  - Cache long static prompts (Anthropic prompt caching, OpenAI prompt caching)
+  - Strip irrelevant code/whitespace from context — every token costs latency + money
+  - Prefer streaming for UX (\`stream: true\`); aggregate tool calls until completion
 
-Flow/dependencies: use \`FlowProducer\` for parent-child job dependencies. Children complete before parent.
-
-Cleanup: \`removeOnComplete: { count: 100 }\` to prevent Redis memory growth. Run \`queue.obliterate()\` in tests.`,
+**Evaluation**: golden-set tests with deterministic assertions (regex, JSON parse, semantic similarity threshold). Track latency, cost, and accuracy per release.`,
     requiredMcpServers: [],
     rules: [
-      'ALWAYS set jobId for idempotent job deduplication',
-      'Use exponential backoff for retry strategy',
-      'Set removeOnComplete to prevent Redis memory growth',
-      'Listen to Queue events, not Worker events, for observability',
+      'ALWAYS validate model output with Zod (or equivalent) — never trust schema adherence',
+      'Cap tool-use loop iterations to prevent runaway agents',
+      'Use provider-native structured output APIs over prompt-engineered JSON',
+      'In RAG, instruct the model to say "I don\'t know" when context is insufficient',
+      'Cache long static prompts to cut latency and cost',
     ],
   },
 
+  // ── SEO ─────────────────────────────────────────────────────────────────
   {
     id: 'skill:seo-gsc',
     name: 'SEO & Google Search Console',
     description:
       'Technical SEO best practices, structured data, Core Web Vitals, Google Search Console API integration.',
+    icon: 'i-ph-magnifying-glass-light',
+    category: 'seo',
     knowledgeBlock: `### SEO & Google Search Console Patterns
 
 **Technical SEO checklist:**
@@ -331,3 +961,17 @@ export function getSkillById(id: string): AgentSkill | undefined {
 export function getSkillsByIds(ids: string[]): AgentSkill[] {
   return ids.map((id) => getSkillById(id)).filter((s): s is AgentSkill => s !== undefined);
 }
+
+/** All distinct categories present in the built-in catalog, in display order. */
+export const SKILL_CATEGORIES = [
+  'frontend',
+  'backend',
+  'database',
+  'devops',
+  'testing',
+  'security',
+  'ai-llm',
+  'seo',
+  'tooling',
+  'other',
+] as const;

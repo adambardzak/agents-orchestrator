@@ -34,6 +34,9 @@
               <UBadge :color="p.userId ? 'blue' : 'green'" variant="subtle" size="xs">
                 {{ p.userId ? 'personal' : 'org-shared' }}
               </UBadge>
+              <UBadge v-if="p.isDefault" color="amber" variant="subtle" size="xs" :ui="{ rounded: 'rounded-full' }">
+                <UIcon name="i-ph-star-fill" class="w-3 h-3 mr-0.5" />default
+              </UBadge>
               <UBadge v-if="!p.enabled" color="gray" variant="subtle" size="xs">disabled</UBadge>
               <UBadge v-if="p.hasApiKey" color="completed" variant="subtle" size="xs">key set</UBadge>
               <UBadge v-else-if="needsKey(p.provider)" color="red" variant="subtle" size="xs">no key</UBadge>
@@ -48,6 +51,17 @@
           </div>
 
           <div class="flex items-center gap-2">
+            <UButton
+              v-if="!p.isDefault"
+              size="xs"
+              variant="ghost"
+              icon="i-ph-star-light"
+              :loading="settingDefault[p.id]"
+              :title="`Pin as default for ${displayName(p.provider)} (${p.userId ? 'personal' : 'org-shared'} scope)`"
+              @click="onSetDefault(p)"
+            >
+              Default
+            </UButton>
             <UButton size="xs" variant="ghost" icon="i-ph-plug-charging-light" :loading="testing[p.id]" @click="onTest(p)">Test</UButton>
             <UButton size="xs" variant="ghost" icon="i-ph-pencil-simple-light" @click="openEditModal(p)">Edit</UButton>
             <UButton size="xs" variant="ghost" color="red" icon="i-ph-trash-light" :loading="deleting[p.id]" @click="onDelete(p)">Delete</UButton>
@@ -151,6 +165,7 @@ const types = ref<ProviderTypeInfo[]>([]);
 const loading = ref(true);
 const testing = reactive<Record<string, boolean>>({});
 const deleting = reactive<Record<string, boolean>>({});
+const settingDefault = reactive<Record<string, boolean>>({});
 const testResults = reactive<Record<string, TestResult>>({});
 
 const showModal = ref(false);
@@ -272,6 +287,22 @@ async function onDelete(p: AIProviderRow): Promise<void> {
     toast.add({ title: 'Delete failed', description: (err as Error).message, color: 'red' });
   } finally {
     deleting[p.id] = false;
+  }
+}
+
+async function onSetDefault(p: AIProviderRow): Promise<void> {
+  settingDefault[p.id] = true;
+  try {
+    await api.setDefault(p.id);
+    // Re-fetch the list so sibling rows in the same (scope, kind) group
+    // have their isDefault flag cleared. Cheaper than mutating client-side
+    // because we'd have to know which sibling group p belongs to.
+    providers.value = await api.list();
+    toast.add({ title: `Default set: ${p.label}`, color: 'green' });
+  } catch (err) {
+    toast.add({ title: 'Failed to set default', description: (err as Error).message, color: 'red' });
+  } finally {
+    settingDefault[p.id] = false;
   }
 }
 

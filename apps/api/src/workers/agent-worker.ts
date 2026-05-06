@@ -883,27 +883,41 @@ export class AgentWorker {
 
   /**
    * Resolves the AI provider override for a task. Looks up the task's project
-   * → organization, then asks AIProviderService for the first enabled provider
-   * with an API key. Maps the task's complexity to a concrete model ID for
-   * that provider (or uses the user's `defaultModel` when set).
+   * → (organization, owner), then asks AIProviderService.resolveForUser for
+   * the highest-precedence enabled provider with an API key:
+   *
+   *   1. project owner's personal entry (any kind, default-then-recent)
+   *   2. org-shared entry as fallback
+   *   3. null → spawn falls back to default Copilot routing
+   *
+   * The resolved provider's complexity → model mapping (or its `defaultModel`)
+   * decides which concrete model id we hand to OpenCode.
    *
    * Returns undefined when:
-   *   - the project has no organization_id (legacy/bootstrap row)
-   *   - the org has no enabled provider with a key
-   *   - the resolved provider type lacks a complexity mapping AND no defaultModel
-   *
-   * In all "undefined" cases the spawn falls back to standard Copilot routing.
+   *   - the project has neither organization_id nor created_by (legacy row)
+   *   - no resolved provider exists or none has a valid model for this complexity
+   *   - the resolved provider is github-copilot (already the default path)
    */
   private async resolveProviderOverride(task: AgentTask): Promise<ProviderOverride | undefined> {
     try {
-      const { rows } = await this.db.query<{ organization_id: string | null }>(
-        'SELECT organization_id FROM projects WHERE id = $1',
+      const { rows } = await this.db.query<{
+        organization_id: string | null;
+        created_by:      string | null;
+      }>(
+        'SELECT organization_id, created_by FROM projects WHERE id = $1',
         [task.projectId],
       );
-      const orgId = rows[0]?.organization_id;
-      if (!orgId) return undefined;
+      const orgId    = rows[0]?.organization_id ?? null;
+      const ownerId  = rows[0]?.created_by      ?? null;
 
-      const active = await this.aiProviders.resolveActiveForOrg(orgId);
+      // Need at least one scope to look up — both null = legacy/bootstrap row.
+      if (!orgId && !ownerId) return undefined;
+
+      // "User wins, org fallback" — project owner's personal key takes
+      // precedence over the org-shared one (per spec v0.3 Krok 3).
+      const active = ownerId
+        ? await this.aiProviders.resolveForUser(ownerId, orgId)
+        : await this.aiProviders.resolveActiveForOrg(orgId!);
       if (!active) return undefined;
 
       // Skip override for github-copilot (Copilot is the default path anyway).
@@ -926,8 +940,14 @@ export class AgentWorker {
       const prefixedModel = `${active.provider.provider}/${modelName}`;
 
       this.logger.info(
-        { taskId: task.id, provider: active.provider.provider, model: prefixedModel },
-        'Using org-configured AI provider override',
+        {
+          taskId:   task.id,
+          provider: active.provider.provider,
+          model:    prefixedModel,
+          scope:    active.provider.userId ? 'user' : 'org-shared',
+          ownerId,
+        },
+        'Using resolved AI provider override',
       );
 
       return {

@@ -45,6 +45,7 @@ const updateSchema = z.object({
   baseUrl:      z.string().url().nullable().optional(),
   defaultModel: z.string().nullable().optional(),
   enabled:      z.boolean().optional(),
+  isDefault:    z.boolean().optional(),
   metadata:     z.record(z.unknown()).optional(),
 });
 
@@ -163,4 +164,49 @@ export async function aiProviderRoutes(fastify: FastifyInstance): Promise<void> 
     });
     return { result };
   });
+
+  // ── PATCH /api/ai-providers/:id/default ────────────────────────────────
+  // Pin this provider as the default within its (scope, kind). Atomically
+  // clears any sibling default first so the partial unique index holds.
+  fastify.patch<{ Params: { id: string } }>(
+    '/api/ai-providers/:id/default',
+    async (request, reply) => {
+      const user = await request.requireUser();
+      const orgId = request.session?.activeOrganizationId;
+      const existing = await service.getById(request.params.id);
+      if (!existing) return reply.status(404).send({ error: 'Not found' });
+      if (existing.organizationId !== orgId) return reply.status(403).send({ error: 'Forbidden' });
+      // Personal entries can only be modified by their owner.
+      if (existing.userId && existing.userId !== user.id) {
+        return reply.status(403).send({ error: 'Cannot modify another user\'s personal provider' });
+      }
+      const updated = await service.setDefault(request.params.id);
+      return { provider: updated };
+    },
+  );
+
+  // ── GET /api/ai-providers/resolved ─────────────────────────────────────
+  // Debug/UI endpoint — shows which provider would be picked for the current
+  // user inside the active org, applying the "user wins, org fallback" rule.
+  // Optional ?kind=anthropic|openai|... narrows to a specific provider type.
+  fastify.get<{ Querystring: { kind?: string } }>(
+    '/api/ai-providers/resolved',
+    async (request, reply) => {
+      const user = await request.requireUser();
+      const orgId = request.session?.activeOrganizationId ?? null;
+      const kindParam = request.query.kind;
+      const kind: AIProviderType | undefined =
+        kindParam && (PROVIDER_TYPES as readonly string[]).includes(kindParam)
+          ? (kindParam as AIProviderType)
+          : undefined;
+
+      const resolved = await service.resolveForUser(user.id, orgId, kind);
+      if (!resolved) return reply.send({ provider: null });
+      // Strip the apiKey before returning — caller only needs metadata.
+      return reply.send({
+        provider: resolved.provider,
+        scope:    resolved.provider.userId ? 'user' : 'org-shared',
+      });
+    },
+  );
 }

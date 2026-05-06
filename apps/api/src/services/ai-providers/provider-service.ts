@@ -33,6 +33,7 @@ export interface AIProvider {
   baseUrl:        string | null;
   defaultModel:   string | null;
   enabled:        boolean;
+  isDefault:      boolean;       // pinned default within (scope, kind)
   hasApiKey:      boolean;       // never expose the key itself
   metadata:       Record<string, unknown>;
   createdAt:      Date;
@@ -56,6 +57,7 @@ export interface UpdateAIProviderInput {
   baseUrl?:      string | null;
   defaultModel?: string | null;
   enabled?:      boolean;
+  isDefault?:    boolean;
   metadata?:     Record<string, unknown>;
 }
 
@@ -114,6 +116,7 @@ export class AIProviderService {
     if (input.baseUrl !== undefined) { sets.push(`base_url = $${i++}`); params.push(input.baseUrl); }
     if (input.defaultModel !== undefined) { sets.push(`default_model = $${i++}`); params.push(input.defaultModel); }
     if (input.enabled !== undefined) { sets.push(`enabled = $${i++}`); params.push(input.enabled); }
+    if (input.isDefault !== undefined) { sets.push(`is_default = $${i++}`); params.push(input.isDefault); }
     if (input.metadata !== undefined) { sets.push(`metadata = $${i++}::jsonb`); params.push(JSON.stringify(input.metadata)); }
 
     if (sets.length === 0) return await this.getById(id);
@@ -151,6 +154,10 @@ export class AIProviderService {
    *
    * Returns null when the org has no usable provider configured — caller
    * should fall back to the default GitHub Copilot routing.
+   *
+   * @deprecated Prefer `resolveForUser(userId, orgId, kind?)` which honors the
+   *             "user wins, org fallback" precedence and per-kind defaults.
+   *             Kept for backwards compatibility with old worker code paths.
    */
   async resolveActiveForOrg(
     organizationId: string,
@@ -160,7 +167,7 @@ export class AIProviderService {
         WHERE organization_id = $1
           AND enabled = true
           AND api_key_enc IS NOT NULL
-        ORDER BY user_id NULLS FIRST, created_at ASC
+        ORDER BY user_id NULLS FIRST, is_default DESC, created_at ASC
         LIMIT 1`,
       [organizationId],
     );
@@ -170,7 +177,118 @@ export class AIProviderService {
     return { provider, apiKey };
   }
 
+  /**
+   * "User wins, org fallback" resolver.
+   *
+   * Two-phase lookup:
+   *   1. user-owned entries for this user (any org) — preferring is_default,
+   *      then most-recent. If a row matches, return it.
+   *   2. org-shared entries for `organizationId` — same preference order.
+   *
+   * When `kind` is omitted we pick across all provider kinds (worker uses
+   * this to find *any* configured provider; UI debug endpoint passes a
+   * specific kind to show which entry would win).
+   *
+   * Only entries that are `enabled = true` AND have an API key are
+   * candidates. Returns null when nothing matches — caller should fall back
+   * to the default Copilot path.
+   */
+  async resolveForUser(
+    userId:         string,
+    organizationId: string | null,
+    kind?:          AIProviderType,
+  ): Promise<{ provider: AIProvider; apiKey: string } | null> {
+    // Phase 1 — user-owned (highest precedence, regardless of org).
+    const userRow = await this.pickOne(
+      `WHERE user_id = $1
+         AND enabled = true
+         AND api_key_enc IS NOT NULL
+         ${kind ? 'AND provider = $2' : ''}`,
+      kind ? [userId, kind] : [userId],
+    );
+    if (userRow) return userRow;
+
+    // Phase 2 — org-shared fallback.
+    if (!organizationId) return null;
+    return this.pickOne(
+      `WHERE organization_id = $1
+         AND user_id IS NULL
+         AND enabled = true
+         AND api_key_enc IS NOT NULL
+         ${kind ? 'AND provider = $2' : ''}`,
+      kind ? [organizationId, kind] : [organizationId],
+    );
+  }
+
+  /**
+   * Pins `id` as the default for its (scope, provider) pair. Atomically
+   * clears any other default in the same scope first so the partial unique
+   * index never trips.
+   *
+   * Returns the updated row (or null if id not found).
+   */
+  async setDefault(id: string): Promise<AIProvider | null> {
+    const existing = await this.getById(id);
+    if (!existing) return null;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Clear any sibling defaults in the same scope+kind.
+      if (existing.userId) {
+        await client.query(
+          `UPDATE ai_providers SET is_default = FALSE
+             WHERE user_id = $1 AND provider = $2 AND id <> $3`,
+          [existing.userId, existing.provider, id],
+        );
+      } else {
+        await client.query(
+          `UPDATE ai_providers SET is_default = FALSE
+             WHERE organization_id = $1 AND user_id IS NULL
+               AND provider = $2 AND id <> $3`,
+          [existing.organizationId, existing.provider, id],
+        );
+      }
+      const { rows: [r] } = await client.query(
+        `UPDATE ai_providers
+            SET is_default = TRUE, updated_at = NOW()
+          WHERE id = $1 RETURNING *`,
+        [id],
+      );
+      await client.query('COMMIT');
+      return r ? this.mapRow(r) : null;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // ── private ──────────────────────────────────────────────────────────────
+
+  /**
+   * Internal helper for resolveForUser — runs a SELECT with the given WHERE
+   * fragment, ordered by `is_default DESC, created_at DESC` so default wins,
+   * then most-recent. Returns the decrypted key alongside the row, or null.
+   */
+  private async pickOne(
+    whereClause: string,
+    params:      unknown[],
+  ): Promise<{ provider: AIProvider; apiKey: string } | null> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ai_providers
+        ${whereClause}
+        ORDER BY is_default DESC, created_at DESC
+        LIMIT 1`,
+      params,
+    );
+    if (rows.length === 0) return null;
+    const provider = this.mapRow(rows[0] as Record<string, unknown>);
+    const apiKey = decryptString(String(rows[0]['api_key_enc']));
+    return { provider, apiKey };
+  }
+
   private mapRow(r: Record<string, unknown>): AIProvider {
     return {
       id:             String(r['id']),
@@ -181,6 +299,7 @@ export class AIProviderService {
       baseUrl:        (r['base_url'] as string | null) ?? null,
       defaultModel:   (r['default_model'] as string | null) ?? null,
       enabled:        Boolean(r['enabled']),
+      isDefault:      Boolean(r['is_default']),
       hasApiKey:      r['api_key_enc'] !== null && r['api_key_enc'] !== undefined,
       metadata:       (r['metadata'] as Record<string, unknown>) ?? {},
       createdAt:      new Date(r['created_at'] as string),

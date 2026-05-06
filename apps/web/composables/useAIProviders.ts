@@ -28,10 +28,16 @@ export interface AIProviderRow {
   baseUrl: string | null;
   defaultModel: string | null;
   enabled: boolean;
+  isDefault: boolean;
   hasApiKey: boolean;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ResolvedProvider {
+  provider: AIProviderRow | null;
+  scope?: 'user' | 'org-shared';
 }
 
 export interface TestResult {
@@ -90,11 +96,34 @@ export function useAIProviders() {
     baseUrl?:      string | null;
     defaultModel?: string | null;
     enabled?:      boolean;
+    isDefault?:    boolean;
   }): Promise<AIProviderRow> {
     const res = await req(`/api/ai-providers/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { provider: AIProviderRow };
     return data.provider;
+  }
+
+  /**
+   * Pins this provider as the default within its (scope, kind) group.
+   * Backend atomically clears any sibling default first.
+   */
+  async function setDefault(id: string): Promise<AIProviderRow> {
+    const res = await req(`/api/ai-providers/${id}/default`, { method: 'PATCH', body: '{}' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as { provider: AIProviderRow };
+    return data.provider;
+  }
+
+  /**
+   * Returns which provider would currently be picked by the resolver
+   * (user-wins + org fallback). Optional `kind` narrows by provider type.
+   */
+  async function resolved(kind?: AIProviderType): Promise<ResolvedProvider> {
+    const path = kind ? `/api/ai-providers/resolved?kind=${kind}` : '/api/ai-providers/resolved';
+    const res = await req(path);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as ResolvedProvider;
   }
 
   async function remove(id: string): Promise<void> {
@@ -120,5 +149,5 @@ export function useAIProviders() {
     return data.result;
   }
 
-  return { listTypes, list, create, update, remove, testStored, testInline };
+  return { listTypes, list, create, update, remove, testStored, testInline, setDefault, resolved };
 }

@@ -266,7 +266,7 @@
           <!-- code-server quick link -->
           <a
             v-if="resolvedCodeServerUrl && projectStore.activeProject"
-            :href="`${resolvedCodeServerUrl}/?folder=${encodeURIComponent(projectStore.activeProject.workspacePath)}`"
+            :href="buildCodeServerLink({ workspacePath: projectStore.activeProject.workspacePath })"
             target="_blank"
             rel="noopener"
             class="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
@@ -470,6 +470,7 @@
 import { useSessionStore } from '~/stores/session';
 import { useProjectStore } from '~/stores/project';
 import { useOrchestratorApi } from '~/composables/useOrchestratorApi';
+import { useCodeServerLink } from '~/composables/useCodeServerLink';
 import type {
   BudgetAlertPayload,
   ApprovalRequiredPayload,
@@ -574,6 +575,11 @@ function toggleColorMode() {
 const resolvedCodeServerUrl = computed(
   () => (config.public.codeServerUrl as string | undefined) ?? '',
 );
+
+// Code-server runs in a Docker container that mounts the host workspaces
+// volume at `/home/coder/workspaces`. The DB stores the host-side path
+// (e.g. `/tmp/orchestrator-workspaces/<id>`). buildLink rebases for us.
+const { buildLink: buildCodeServerLink } = useCodeServerLink();
 
 const budgetAlerts        = reactive<BudgetAlertPayload[]>([]);
 const pendingApprovals    = reactive<ApprovalRequiredPayload[]>([]);

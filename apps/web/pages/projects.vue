@@ -112,7 +112,7 @@
             size="xs"
             variant="ghost"
             icon="i-ph-code-light"
-            :href="`${codeServerUrl}/?folder=${encodeURIComponent(project.workspacePath)}`"
+            :href="buildCodeServerLink({ workspacePath: project.workspacePath })"
             target="_blank"
             rel="noopener"
             @click.stop
@@ -274,6 +274,7 @@
 <script setup lang="ts">
 import { useProjectStore } from '~/stores/project';
 import { useOrchestratorApi } from '~/composables/useOrchestratorApi';
+import { useCodeServerLink } from '~/composables/useCodeServerLink';
 import type { Project } from '~/composables/useOrchestratorApi';
 
 useHead({ title: 'Projects — Agent Orchestrator' });
@@ -282,6 +283,9 @@ const api = useOrchestratorApi();
 const projectStore = useProjectStore();
 const config = useRuntimeConfig();
 const codeServerUrl = computed(() => config.public.codeServerUrl as string | undefined);
+// Code-server runs in Docker; rebase host workspace paths to the path
+// visible inside the code-server container before opening.
+const { buildLink: buildCodeServerLink } = useCodeServerLink();
 
 const projects = computed(() => projectStore.projects);
 const loading = ref(false);

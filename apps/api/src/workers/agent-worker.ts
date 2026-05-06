@@ -22,6 +22,7 @@ import { getGitProvider } from '../services/git/registry.js';
 import { commitAll, pushBranch } from '../services/git/workspace-git.js';
 import { AIProviderService } from '../services/ai-providers/provider-service.js';
 import { KnowledgeService } from '../services/knowledge/knowledge-service.js';
+import { QaRunner } from '../services/qa/qa-runner.js';
 import { resolveProviderModel } from '../services/ai-providers/complexity-map.js';
 import type { ProviderOverride } from '../services/model-router/router.js';
 
@@ -239,6 +240,9 @@ export class AgentWorker {
   /** Lazy-initialized KB service for org-level knowledge retrieval. */
   private knowledge: KnowledgeService;
 
+  /** Deterministic post-task QA runner (tsc/eslint/vitest/playwright). */
+  private qaRunner: QaRunner;
+
   constructor(deps: AgentWorkerDeps) {
     this.logger = deps.logger;
     this.processManager = deps.processManager;
@@ -252,6 +256,7 @@ export class AgentWorker {
 
     this.aiProviders = new AIProviderService(deps.db);
     this.knowledge = new KnowledgeService(deps.db, deps.logger, env.GITHUB_TOKEN);
+    this.qaRunner = new QaRunner(deps.db, deps.logger);
 
     this.worker = new Worker<AgentJobData>(
       AGENT_QUEUE_NAME,
@@ -650,6 +655,14 @@ export class AgentWorker {
               void this.autoCommitTaskChanges(task, summary);
             }
 
+            // Run deterministic QA validation against the workspace for
+            // code-writing agents. Fire-and-forget — results are advisory and
+            // surfaced in the UI via /api/tasks/:id/qa. Skipped for agents
+            // that don't produce code (orchestrator/document/qa).
+            if (!['orchestrator', 'document', 'qa'].includes(task.agentType)) {
+              void this.runPostTaskQa(task);
+            }
+
             if (task.agentType === 'orchestrator') {
               // Check for clarification request BEFORE checking for a plan
               // The orchestrator may emit clarification_needed in either the streaming output
@@ -913,6 +926,46 @@ export class AgentWorker {
     } catch (err) {
       this.logger.warn({ taskId: task.id, err: (err as Error).message }, 'Failed to resolve AI provider override');
       return undefined;
+    }
+  }
+
+  /**
+   * Run deterministic QA validation against the project workspace after a
+   * code-writing task completes. Tools are auto-detected from package.json
+   * and config files; results land in `agent_qa_results` and are broadcast
+   * via EventBus so the UI can refresh in real time.
+   *
+   * Never throws — QA is advisory and must not affect the parent task lifecycle.
+   */
+  private async runPostTaskQa(task: AgentTask): Promise<void> {
+    try {
+      const workspacePath = await this.getProjectWorkspaceDir(task.projectId);
+      const results = await this.qaRunner.runAndStore(task.id, workspacePath);
+      if (results.length === 0) return;
+
+      const failed = results.filter((r) => r.status === 'failed' || r.status === 'error');
+      this.eventBus.publish(
+        'qa:completed',
+        task.sessionId,
+        {
+          taskId:       task.id,
+          totalTools:   results.length,
+          failedTools:  failed.length,
+          totalErrors:  results.reduce((sum, r) => sum + r.errorCount, 0),
+          totalWarnings: results.reduce((sum, r) => sum + r.warningCount, 0),
+          results: results.map((r) => ({
+            tool:         r.tool,
+            status:       r.status,
+            summary:      r.summary,
+            errorCount:   r.errorCount,
+            warningCount: r.warningCount,
+            durationMs:   r.durationMs,
+          })),
+        },
+        task.id,
+      );
+    } catch (err) {
+      this.logger.warn({ taskId: task.id, err: (err as Error).message }, 'Post-task QA failed');
     }
   }
 

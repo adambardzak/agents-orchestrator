@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AgentTask, AgentType, TaskComplexity } from '@agent-orchestrator/shared';
 import { env } from '../config/env.js';
+import { QaRunner } from '../services/qa/qa-runner.js';
 
 export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /api/tasks/:id/approve — approve a destructive task (awaiting_approval → pending/enqueued)
@@ -189,6 +190,21 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     return task;
+  });
+
+  // GET /api/tasks/:id/qa — deterministic QA results (tsc/eslint/vitest/playwright)
+  // populated by the post-task hook in agent-worker. Returns empty array when
+  // QA hasn't run yet (e.g. task still in flight or non-code agent).
+  const qaRunner = new QaRunner(fastify.pg.pool, fastify.log);
+  fastify.get<{ Params: { id: string } }>('/api/tasks/:id/qa', async (request, reply) => {
+    const { id } = request.params;
+    const { rows: [task] } = await fastify.pg.query(
+      'SELECT id FROM agent_tasks WHERE id = $1',
+      [id],
+    );
+    if (!task) return reply.status(404).send({ error: 'Task not found' });
+    const results = await qaRunner.getResultsForTask(id);
+    return { results };
   });
 
   // POST /api/tasks/:id/pause

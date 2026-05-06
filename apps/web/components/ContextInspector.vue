@@ -76,6 +76,47 @@
         </div>
       </div>
 
+      <!-- QA Results (deterministic post-task validation) -->
+      <div v-if="qaResults.length > 0 || qaLoading">
+        <div class="text-[10px] uppercase tracking-wider text-text-faint font-semibold mb-2 flex items-center gap-2">
+          QA Validation
+          <UIcon v-if="qaLoading" name="i-ph-circle-notch-light" class="w-3 h-3 animate-spin" />
+        </div>
+        <div class="space-y-1.5">
+          <div
+            v-for="r in qaResults"
+            :key="r.tool"
+            class="text-xs bg-surface rounded-md px-2.5 py-2 border border-border"
+          >
+            <div class="flex items-center gap-2 mb-1">
+              <span :class="qaStatusClass(r.status)" class="w-1.5 h-1.5 rounded-full flex-shrink-0" />
+              <span class="font-mono font-semibold uppercase tracking-wide text-[10px]">{{ r.tool }}</span>
+              <span class="text-text-secondary truncate flex-1">{{ r.summary }}</span>
+              <span class="text-text-faint text-[10px]">{{ formatDuration(r.durationMs) }}</span>
+            </div>
+            <div
+              v-if="r.details.problems && r.details.problems.length > 0"
+              class="space-y-0.5 mt-1.5 max-h-40 overflow-y-auto"
+            >
+              <div
+                v-for="(p, i) in r.details.problems.slice(0, 8)"
+                :key="i"
+                class="font-mono text-[11px] leading-tight"
+                :class="p.severity === 'error' ? 'text-failed' : 'text-pending'"
+              >
+                <span v-if="p.file" class="text-text-faint">{{ shortPath(p.file) }}</span>
+                <span v-if="p.line" class="text-text-faint">:{{ p.line }}</span>
+                <span class="ml-1">{{ p.message }}</span>
+                <span v-if="p.rule" class="text-text-faint"> [{{ p.rule }}]</span>
+              </div>
+              <div v-if="r.details.problems.length > 8" class="text-text-faint text-[10px] italic">
+                +{{ r.details.problems.length - 8 }} more
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Events -->
       <div>
         <div class="text-[10px] uppercase tracking-wider text-text-faint font-semibold mb-2">
@@ -113,6 +154,7 @@
 
 <script setup lang="ts">
 import type { AgentTask, OpencodeEvent } from '@agent-orchestrator/shared';
+import type { QaResult } from '~/composables/useTaskQa';
 
 const props = defineProps<{
   task: AgentTask;
@@ -120,6 +162,54 @@ const props = defineProps<{
 }>();
 
 defineEmits<{ close: [] }>();
+
+// ── QA validation results ──────────────────────────────────────────────────
+const qaApi = useTaskQa();
+const qaResults = ref<QaResult[]>([]);
+const qaLoading = ref(false);
+
+async function loadQa(taskId: string): Promise<void> {
+  qaLoading.value = true;
+  try {
+    qaResults.value = await qaApi.fetchForTask(taskId);
+  } catch {
+    qaResults.value = [];
+  } finally {
+    qaLoading.value = false;
+  }
+}
+
+// Re-fetch when the inspected task changes; also poll once when status flips
+// to completed (QA runs async after the task settles).
+watch(() => props.task.id, (id) => { if (id) void loadQa(id); }, { immediate: true });
+watch(() => props.task.status, (status) => {
+  if (status === 'completed') {
+    // Poll twice with backoff — QA usually finishes within ~10s for small projects.
+    setTimeout(() => void loadQa(props.task.id), 3000);
+    setTimeout(() => void loadQa(props.task.id), 12000);
+  }
+});
+
+function qaStatusClass(status: QaResult['status']): string {
+  switch (status) {
+    case 'passed':  return 'bg-completed';
+    case 'failed':  return 'bg-failed';
+    case 'error':   return 'bg-failed';
+    case 'skipped': return 'bg-text-faint';
+    default:        return 'bg-text-faint';
+  }
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function shortPath(path: string): string {
+  // Keep last 2 segments
+  const parts = path.split('/');
+  return parts.length > 2 ? '.../' + parts.slice(-2).join('/') : path;
+}
 
 const MAX_CONTEXT = 200_000;
 

@@ -171,6 +171,7 @@ export type WsMessageType =
   | 'clarification:needed' // Orchestrator needs answers before planning
   | 'ticket:created'
   | 'ticket:updated'
+  | 'qa:completed'        // Deterministic QA validation finished for a task
   | 'error';
 
 export interface SessionUpdatePayload {

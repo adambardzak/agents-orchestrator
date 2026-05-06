@@ -29,15 +29,38 @@ async function getGitConnection(
 }
 
 /**
- * Extract owner/repo from an HTTPS git remote URL. Handles GitHub URLs with
- * or without the trailing `.git`.
- *   https://github.com/owner/repo.git → "owner/repo"
- *   https://github.com/owner/repo     → "owner/repo"
+ * Extract owner/repo (or namespace/repo) from an HTTPS git remote URL.
+ * Provider-agnostic — works for github.com, github.your-corp.com, gitlab.com,
+ * gitlab.apps.corp, bitbucket.org, etc. We strip the optional `.git` suffix
+ * and take the last two path segments. SSH-style URLs (`git@host:owner/repo`)
+ * are accepted too.
+ *   https://github.com/owner/repo.git              → "owner/repo"
+ *   https://gitlab.apps.corp/group/sub/proj.git    → "sub/proj"  (last two)
+ *   git@github.your-corp.com:org/repo.git          → "org/repo"
+ *
+ * Note: deeply nested GitLab groups collapse to just the last group + repo.
+ * The provider's createPullRequest contract treats `fullName` as opaque, but
+ * GitHub strictly expects "owner/repo" — for nested-group GitLab paths the
+ * caller should fetch path_with_namespace from the API instead. This helper
+ * is good enough for the common case.
  */
 function extractFullName(remoteUrl: string): string | null {
-  const m = remoteUrl.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i);
-  if (!m) return null;
-  return `${m[1]}/${m[2]}`;
+  // SSH form: git@host:path/to/repo(.git)?
+  const ssh = remoteUrl.match(/^[^@]+@[^:]+:(.+?)(?:\.git)?$/);
+  if (ssh && ssh[1]) {
+    const parts = ssh[1].split('/').filter(Boolean);
+    if (parts.length >= 2) return parts.slice(-2).join('/');
+  }
+  // HTTPS form: https://host/path/to/repo(.git)?
+  try {
+    const u = new URL(remoteUrl);
+    const path = u.pathname.replace(/^\/+/, '').replace(/\.git$/i, '');
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length >= 2) return parts.slice(-2).join('/');
+  } catch {
+    // not a URL
+  }
+  return null;
 }
 
 /**

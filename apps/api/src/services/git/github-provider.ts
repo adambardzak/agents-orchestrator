@@ -7,7 +7,12 @@
  *     sign-in, so the access token stored in `auth_account` already lets
  *     us create/push repos. We mirror those tokens into `git_connections`
  *     so they can be revoked/rotated independently.
- *   • API base hardcoded to github.com; Enterprise support is a future TODO.
+ *   • GitHub Enterprise Server is supported via `apiBase` in the config —
+ *     set `GITHUB_API_BASE=https://github.your-corp.com` in the API env
+ *     and the registry will pass it through. The OAuth UI lives at
+ *     <host>/login/oauth/* on both SaaS and Enterprise; the REST API
+ *     lives at api.github.com on SaaS but at <host>/api/v3 on Enterprise.
+ *     Octokit handles the API split via `baseUrl`.
  */
 import { Octokit } from '@octokit/rest';
 import {
@@ -24,13 +29,34 @@ import {
 export interface GitHubProviderConfig {
   clientId: string;
   clientSecret: string;
+  /**
+   * Base URL of the GitHub instance. Defaults to https://github.com (SaaS).
+   * For GitHub Enterprise Server use the host of your installation,
+   * e.g. https://github.your-corp.com — the provider derives the OAuth UI
+   * URL and the API URL from it.
+   */
+  apiBase?: string;
 }
 
 export class GitHubProvider implements GitProvider {
   readonly id = 'github' as const;
-  readonly displayName = 'GitHub';
+  readonly displayName: string;
+  /** Host of the OAuth UI: github.com or github.your-corp.com */
+  private readonly webBase: string;
+  /** Host of the REST API: api.github.com or <host>/api/v3 */
+  private readonly apiBase: string;
 
-  constructor(private readonly cfg: GitHubProviderConfig) {}
+  constructor(private readonly cfg: GitHubProviderConfig) {
+    const rawBase = cfg.apiBase ?? 'https://github.com';
+    const host = new URL(rawBase).host;
+    this.webBase = rawBase.replace(/\/$/, '');
+    // SaaS GitHub uses a separate api.github.com; Enterprise Server uses
+    // <host>/api/v3 on the same hostname. Octokit accepts both via baseUrl.
+    this.apiBase = host === 'github.com'
+      ? 'https://api.github.com'
+      : `${this.webBase}/api/v3`;
+    this.displayName = host === 'github.com' ? 'GitHub' : `GitHub (${host})`;
+  }
 
   authorizeUrl(args: { state: string; redirectUri: string; scopes?: string[] }): string {
     const scopes = (args.scopes ?? DEFAULT_SCOPES.github).join(' ');
@@ -41,11 +67,11 @@ export class GitHubProvider implements GitProvider {
       state:        args.state,
       allow_signup: 'true',
     });
-    return `https://github.com/login/oauth/authorize?${params.toString()}`;
+    return `${this.webBase}/login/oauth/authorize?${params.toString()}`;
   }
 
   async exchangeCode(args: { code: string; redirectUri: string }): Promise<OAuthTokens> {
-    const res = await fetch('https://github.com/login/oauth/access_token', {
+    const res = await fetch(`${this.webBase}/login/oauth/access_token`, {
       method: 'POST',
       headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -78,7 +104,7 @@ export class GitHubProvider implements GitProvider {
   }
 
   async whoami(accessToken: string): Promise<GitAccount> {
-    const oct = new Octokit({ auth: accessToken });
+    const oct = this.octokit(accessToken);
     const { data } = await oct.users.getAuthenticated();
     return {
       id:        String(data.id),
@@ -89,7 +115,7 @@ export class GitHubProvider implements GitProvider {
   }
 
   async listRepos(accessToken: string, opts?: { perPage?: number; page?: number }): Promise<GitRepo[]> {
-    const oct = new Octokit({ auth: accessToken });
+    const oct = this.octokit(accessToken);
     const { data } = await oct.repos.listForAuthenticatedUser({
       per_page: opts?.perPage ?? 100,
       page:     opts?.page ?? 1,
@@ -100,7 +126,7 @@ export class GitHubProvider implements GitProvider {
   }
 
   async createRepo(accessToken: string, opts: CreateRepoOptions): Promise<GitRepo> {
-    const oct = new Octokit({ auth: accessToken });
+    const oct = this.octokit(accessToken);
     // GitHub doesn't have an "internal" visibility for normal accounts; map to private.
     const isPrivate = opts.visibility !== 'public';
     const { data } = await oct.repos.createForAuthenticatedUser({
@@ -124,7 +150,7 @@ export class GitHubProvider implements GitProvider {
     accessToken: string,
     opts: CreatePullRequestOptions,
   ): Promise<PullRequestRef> {
-    const oct = new Octokit({ auth: accessToken });
+    const oct = this.octokit(accessToken);
     const [owner, repo] = opts.fullName.split('/', 2);
     if (!owner || !repo) {
       throw new Error(`Invalid repo fullName "${opts.fullName}" — expected owner/repo`);
@@ -145,6 +171,15 @@ export class GitHubProvider implements GitProvider {
         ? (data.merged_at ? 'merged' : 'closed')
         : 'open',
     };
+  }
+
+  /**
+   * Build an Octokit client pointed at the configured API base. For SaaS
+   * GitHub we leave the default (https://api.github.com); for Enterprise
+   * we point at <host>/api/v3.
+   */
+  private octokit(accessToken: string): Octokit {
+    return new Octokit({ auth: accessToken, baseUrl: this.apiBase });
   }
 
   private mapRepo(r: {

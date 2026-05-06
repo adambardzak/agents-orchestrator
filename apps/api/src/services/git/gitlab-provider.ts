@@ -1,8 +1,11 @@
 /**
  * GitLab provider — uses GitLab.com OAuth + REST v4 API directly via fetch.
  *
- * Self-managed GitLab instances are out of scope for v1; we'd later make the
- * `apiBase` configurable per-connection.
+ * Self-hosted GitLab is supported via `apiBase` in the constructor — set
+ * `GITLAB_API_BASE=https://gitlab.your-corp.com` in the API env and the
+ * registry will wire it through. The endpoint shapes (`/oauth/authorize`,
+ * `/oauth/token`, `/api/v4/*`) are identical between SaaS and self-hosted
+ * GitLab, so the same code path covers both.
  */
 import {
   DEFAULT_SCOPES,
@@ -21,11 +24,16 @@ export interface GitLabProviderConfig {
 
 export class GitLabProvider implements GitProvider {
   readonly id = 'gitlab' as const;
-  readonly displayName = 'GitLab';
+  readonly displayName: string;
   private readonly apiBase: string;
 
   constructor(private readonly cfg: GitLabProviderConfig) {
     this.apiBase = cfg.apiBase ?? 'https://gitlab.com';
+    // Surface the actual host in the display name so users with both a
+    // gitlab.com and a self-hosted instance can tell them apart in the UI.
+    // For SaaS we keep the bare "GitLab" for backwards-compat.
+    const host = new URL(this.apiBase).host;
+    this.displayName = host === 'gitlab.com' ? 'GitLab' : `GitLab (${host})`;
   }
 
   authorizeUrl(args: { state: string; redirectUri: string; scopes?: string[] }): string {

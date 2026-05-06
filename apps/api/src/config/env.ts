@@ -55,6 +55,24 @@ const envSchema = z.object({
   BITBUCKET_OAUTH_CLIENT_ID: z.string().optional(),
   BITBUCKET_OAUTH_CLIENT_SECRET: z.string().optional(),
 
+  /**
+   * Self-hosted Git provider base URLs. When set, the registry points the
+   * provider at your on-prem instance instead of the SaaS default.
+   *
+   *   GITHUB_API_BASE     → e.g. https://github.your-corp.com (GitHub Enterprise Server)
+   *                         The OAuth UI lives at the same host with /login/oauth/* paths.
+   *                         The REST API lives at <host>/api/v3 (Octokit handles this with baseUrl).
+   *   GITLAB_API_BASE     → e.g. https://gitlab.apps.corp
+   *                         OAuth UI: <host>/oauth/* ; REST: <host>/api/v4. The provider
+   *                         already templates both off the same apiBase, so a single var suffices.
+   *
+   * Single-instance per deploy: if you point at on-prem you cannot also connect
+   * to gitlab.com / github.com from the same orchestrator instance. Re-deploy
+   * with different envs if you need both.
+   */
+  GITHUB_API_BASE: z.string().url().optional(),
+  GITLAB_API_BASE: z.string().url().optional(),
+
   /** When true (default), API requires an authenticated session for non-public routes.
    *  Set to "false" only for local single-user dev where you've intentionally
    *  disabled auth for fast iteration. */

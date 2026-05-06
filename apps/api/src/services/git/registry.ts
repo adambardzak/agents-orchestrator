@@ -22,12 +22,17 @@ function build(): Map<GitProviderId, GitProvider> {
     map.set('github', new GitHubProvider({
       clientId:     env.GITHUB_OAUTH_CLIENT_ID,
       clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET,
+      // Set GITHUB_API_BASE=https://github.your-corp.com to point at a
+      // GitHub Enterprise Server. Omit for SaaS github.com (default).
+      ...(env.GITHUB_API_BASE ? { apiBase: env.GITHUB_API_BASE } : {}),
     }));
   }
   if (env.GITLAB_OAUTH_CLIENT_ID && env.GITLAB_OAUTH_CLIENT_SECRET) {
     map.set('gitlab', new GitLabProvider({
       clientId:     env.GITLAB_OAUTH_CLIENT_ID,
       clientSecret: env.GITLAB_OAUTH_CLIENT_SECRET,
+      // Set GITLAB_API_BASE=https://gitlab.your-corp.com for self-hosted.
+      ...(env.GITLAB_API_BASE ? { apiBase: env.GITLAB_API_BASE } : {}),
     }));
   }
   if (env.BITBUCKET_OAUTH_CLIENT_ID && env.BITBUCKET_OAUTH_CLIENT_SECRET) {

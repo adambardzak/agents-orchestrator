@@ -82,13 +82,21 @@ async function buildApp() {
   await fastify.register(skillRoutes);
   await fastify.register(knowledgeRoutes);
 
-  // Health check
-  fastify.get('/health', async () => ({
+  // Health check (registered both with and without /api prefix so it works
+  // behind reverse proxies that either preserve or strip the /api prefix).
+  const healthHandler = async (): Promise<{
+    status: string;
+    version: string;
+    timestamp: string;
+    runningAgents: number;
+  }> => ({
     status: 'ok',
     version: '0.1.0',
     timestamp: new Date().toISOString(),
     runningAgents: fastify.processManager.getRunningCount(),
-  }));
+  });
+  fastify.get('/health',     healthHandler);
+  fastify.get('/api/health', healthHandler);
 
   return fastify;
 }

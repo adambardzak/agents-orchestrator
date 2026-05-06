@@ -14,8 +14,10 @@
 		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 	}
 
-	# API prefix → fastify on :3001 inside docker network
-	handle_path /api/* {
+	# API prefix → fastify on :3001 inside docker network.
+	# Use `handle` (not `handle_path`) so the /api prefix is preserved
+	# — Fastify routes are registered under /api/* (e.g. /api/auth/*).
+	handle /api/* {
 		reverse_proxy api:3001 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
@@ -24,8 +26,8 @@
 		}
 	}
 
-	# WebSocket events
-	handle_path /ws/* {
+	# WebSocket events — same prefix-preserving rule.
+	handle /ws/* {
 		reverse_proxy api:3001
 	}
 

@@ -27,7 +27,7 @@ import type {
   ToolStateError,
 } from '@opencode-ai/sdk';
 import { createOpencodeClient } from '@opencode-ai/sdk';
-import { buildOpencodeConfig } from '../model-router/router.js';
+import { buildOpencodeConfig, type ProviderOverride } from '../model-router/router.js';
 
 export interface SpawnAgentOptions {
   task: AgentTask;
@@ -37,6 +37,8 @@ export interface SpawnAgentOptions {
   workspaceDir?: string;
   githubToken: string;
   extraContext?: string;
+  /** Optional org/user-configured AI provider; bypasses Copilot when set. */
+  providerOverride?: ProviderOverride;
   env?: Record<string, string>;
   onEvent: (event: OpencodeEvent) => void;
   onComplete: (summary: string) => void;
@@ -70,6 +72,7 @@ export class OpenCodeProcessManager {
       workspaceDir: workspaceDirOverride,
       githubToken,
       extraContext,
+      providerOverride,
       env,
       onEvent,
       onComplete,
@@ -90,6 +93,7 @@ export class OpenCodeProcessManager {
       taskComplexity: task.complexity,
       githubToken,
       extraContext,
+      providerOverride,
     });
 
     // Write config as debug artifact

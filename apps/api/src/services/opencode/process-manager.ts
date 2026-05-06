@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { AgentDefinition, AgentTask, OpencodeEvent } from '@agent-orchestrator/shared';
 import type { FastifyBaseLogger } from 'fastify';
-import { buildOpencodeConfig } from '../model-router/router.js';
+import { buildOpencodeConfig, type ProviderOverride } from '../model-router/router.js';
 
 export interface SpawnAgentOptions {
   task: AgentTask;
@@ -13,6 +13,8 @@ export interface SpawnAgentOptions {
   workspaceDir?: string;
   githubToken: string;
   extraContext?: string;
+  /** Optional org/user-configured AI provider; bypasses Copilot when set. */
+  providerOverride?: ProviderOverride;
   env?: Record<string, string>;
   onEvent: (event: OpencodeEvent) => void;
   onComplete: (summary: string) => void;
@@ -51,7 +53,7 @@ export class OpenCodeProcessManager {
   async spawnAgent(options: SpawnAgentOptions): Promise<RunningProcess> {
     const {
       task, agentConfig, workspacesRoot, workspaceDir: workspaceDirOverride,
-      githubToken, extraContext, env, onEvent, onComplete, onError, opencodeBinary,
+      githubToken, extraContext, providerOverride, env, onEvent, onComplete, onError, opencodeBinary,
     } = options;
 
     const workspaceDir = workspaceDirOverride
@@ -69,6 +71,7 @@ export class OpenCodeProcessManager {
       taskComplexity: task.complexity,
       githubToken,
       extraContext,
+      providerOverride,
     });
 
     // Write config to disk as a debug artifact (not used by real OpenCode binary —

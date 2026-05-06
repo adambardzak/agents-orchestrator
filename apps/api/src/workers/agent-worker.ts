@@ -20,6 +20,9 @@ import { ProjectRepoService } from '../services/git/project-repo-service.js';
 import { GitConnectionService } from '../services/git/connection-service.js';
 import { getGitProvider } from '../services/git/registry.js';
 import { commitAll, pushBranch } from '../services/git/workspace-git.js';
+import { AIProviderService } from '../services/ai-providers/provider-service.js';
+import { resolveProviderModel } from '../services/ai-providers/complexity-map.js';
+import type { ProviderOverride } from '../services/model-router/router.js';
 
 // ─── Orchestrator plan shape ──────────────────────────────────────────────────
 
@@ -229,6 +232,9 @@ export class AgentWorker {
   /** Lazy-initialized ticket service. */
   private tickets: TicketService;
 
+  /** Lazy-initialized AI provider service for org-level provider overrides. */
+  private aiProviders: AIProviderService;
+
   constructor(deps: AgentWorkerDeps) {
     this.logger = deps.logger;
     this.processManager = deps.processManager;
@@ -239,6 +245,8 @@ export class AgentWorker {
     this.onTaskStatusChange = deps.onTaskStatusChange;
     this.enqueueTask = deps.enqueueTask;
     this.tickets = new TicketService(deps.db, deps.logger);
+
+    this.aiProviders = new AIProviderService(deps.db);
 
     this.worker = new Worker<AgentJobData>(
       AGENT_QUEUE_NAME,
@@ -384,6 +392,10 @@ export class AgentWorker {
     // Orchestrator: set true when question tool detected → suppress "no plan" warning
     let clarificationTriggered = false;
 
+    // Resolve org-level AI provider override (Anthropic / OpenAI bypass Copilot).
+    // Falls back to Copilot routing when no provider is configured for the org.
+    const providerOverride = await this.resolveProviderOverride(task);
+
     await new Promise<void>((resolve, reject) => {
       this.processManager
         .spawnAgent({
@@ -392,6 +404,7 @@ export class AgentWorker {
           workspacesRoot: env.WORKSPACES_ROOT,
           workspaceDir,
           githubToken,
+          providerOverride,
           extraContext: resolvedExtraContext,
           opencodeBinary: env.OPENCODE_BINARY,
           env: {
@@ -813,6 +826,67 @@ export class AgentWorker {
       );
     } catch (err) {
       this.logger.warn({ err, taskId: task.id }, 'Auto-commit failed (non-fatal)');
+    }
+  }
+
+  /**
+   * Resolves the AI provider override for a task. Looks up the task's project
+   * → organization, then asks AIProviderService for the first enabled provider
+   * with an API key. Maps the task's complexity to a concrete model ID for
+   * that provider (or uses the user's `defaultModel` when set).
+   *
+   * Returns undefined when:
+   *   - the project has no organization_id (legacy/bootstrap row)
+   *   - the org has no enabled provider with a key
+   *   - the resolved provider type lacks a complexity mapping AND no defaultModel
+   *
+   * In all "undefined" cases the spawn falls back to standard Copilot routing.
+   */
+  private async resolveProviderOverride(task: AgentTask): Promise<ProviderOverride | undefined> {
+    try {
+      const { rows } = await this.db.query<{ organization_id: string | null }>(
+        'SELECT organization_id FROM projects WHERE id = $1',
+        [task.projectId],
+      );
+      const orgId = rows[0]?.organization_id;
+      if (!orgId) return undefined;
+
+      const active = await this.aiProviders.resolveActiveForOrg(orgId);
+      if (!active) return undefined;
+
+      // Skip override for github-copilot (Copilot is the default path anyway).
+      if (active.provider.provider === 'github-copilot') return undefined;
+
+      const modelName = resolveProviderModel(
+        active.provider.provider,
+        task.complexity,
+        active.provider.defaultModel,
+      );
+      if (!modelName) {
+        this.logger.warn(
+          { providerId: active.provider.id, provider: active.provider.provider, complexity: task.complexity },
+          'AI provider has no model for this complexity and no defaultModel — falling back to Copilot',
+        );
+        return undefined;
+      }
+
+      // OpenCode model ID format: "<provider>/<model>"
+      const prefixedModel = `${active.provider.provider}/${modelName}`;
+
+      this.logger.info(
+        { taskId: task.id, provider: active.provider.provider, model: prefixedModel },
+        'Using org-configured AI provider override',
+      );
+
+      return {
+        type:    active.provider.provider,
+        model:   prefixedModel,
+        apiKey:  active.apiKey,
+        baseUrl: active.provider.baseUrl,
+      };
+    } catch (err) {
+      this.logger.warn({ taskId: task.id, err: (err as Error).message }, 'Failed to resolve AI provider override');
+      return undefined;
     }
   }
 

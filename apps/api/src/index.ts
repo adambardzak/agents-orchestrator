@@ -23,6 +23,7 @@ import { costRoutes } from './routes/costs.js';
 import { ticketRoutes } from './routes/tickets.js';
 import { organizationRoutes } from './routes/organizations.js';
 import { gitConnectionRoutes } from './routes/git-connections.js';
+import { aiProviderRoutes } from './routes/ai-providers.js';
 
 async function buildApp() {
   const fastify = Fastify({
@@ -75,6 +76,7 @@ async function buildApp() {
   await fastify.register(ticketRoutes);
   await fastify.register(organizationRoutes);
   await fastify.register(gitConnectionRoutes);
+  await fastify.register(aiProviderRoutes);
 
   // Health check
   fastify.get('/health', async () => ({

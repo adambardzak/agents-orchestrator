@@ -286,13 +286,13 @@ export interface OpencodeConfig {
   $schema?: string;
   model?: string;
   /** Provider credentials — nested under provider name */
-  provider?: {
-    'github-copilot'?: {
-      options?: {
-        apiKey?: string;
-      };
+  provider?: Record<string, {
+    options?: {
+      apiKey?: string;
+      baseURL?: string;
+      [key: string]: unknown;
     };
-  };
+  }>;
   mcp?: Record<string, McpServerConfig>;
   /** Named agent definitions (system prompt, model override) */
   agent?: Record<string, OpencodeAgentConfig>;

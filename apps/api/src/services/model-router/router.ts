@@ -1,12 +1,27 @@
 import type { AgentDefinition, OpencodeConfig, TaskComplexity } from '@agent-orchestrator/shared';
 import { MODEL_ROUTING } from '../../config/models.js';
 import { buildMcpServerConfigs } from '../../agents/mcp-catalog.js';
+import type { AIProviderType } from '../ai-providers/provider-service.js';
+
+/**
+ * Optional override that bypasses GitHub Copilot routing and uses a
+ * user-/org-configured AI provider directly. The model ID embedded in
+ * `model` is the prefixed form OpenCode expects, e.g. `anthropic/claude-...`.
+ */
+export interface ProviderOverride {
+  type:     AIProviderType;
+  model:    string; // already prefixed: "anthropic/claude-sonnet-4-..."
+  apiKey:   string;
+  baseUrl?: string | null;
+}
 
 interface BuildConfigOptions {
   agentConfig: AgentDefinition;
   taskComplexity: TaskComplexity;
   githubToken: string;
   extraContext?: string;
+  /** When set, bypasses Copilot and configures `provider[type].options.apiKey`. */
+  providerOverride?: ProviderOverride;
 }
 
 /**
@@ -19,10 +34,13 @@ interface BuildConfigOptions {
  *   - permission["*"] = "allow"               (non-interactive, skip confirmations)
  */
 export function buildOpencodeConfig(options: BuildConfigOptions): OpencodeConfig {
-  const { agentConfig, taskComplexity, githubToken, extraContext } = options;
+  const { agentConfig, taskComplexity, githubToken, extraContext, providerOverride } = options;
 
-  // Resolve model — use task complexity but cap at agent's canEscalateTo
-  const model = resolveModel(agentConfig.defaultComplexity, taskComplexity, agentConfig.canEscalateTo);
+  // Resolve model — when override is set, use its (already prefixed) model ID.
+  // Otherwise fall back to Copilot routing based on task complexity.
+  const model = providerOverride
+    ? providerOverride.model
+    : resolveModel(agentConfig.defaultComplexity, taskComplexity, agentConfig.canEscalateTo);
 
   // ── Assemble system prompt ──────────────────────────────────────────────────
   const parts: string[] = [agentConfig.systemPrompt];
@@ -80,15 +98,26 @@ Only escalate if truly necessary — it increases cost. Current model ceiling: $
   ];
   const mcpServers = buildMcpServerConfigs(allMcpServerIds, process.env as Record<string, string>);
 
+  // ── Build provider block ────────────────────────────────────────────────────
+  // When override is set, configure that provider with the user's key (and
+  // optional baseUrl for self-hosted/Azure). Copilot stays as a fallback so
+  // existing escalation pathways still resolve their token.
+  const providerBlock: OpencodeConfig['provider'] = {
+    'github-copilot': {
+      options: { apiKey: githubToken },
+    },
+  };
+  if (providerOverride) {
+    const opts: Record<string, string> = { apiKey: providerOverride.apiKey };
+    if (providerOverride.baseUrl) opts.baseURL = providerOverride.baseUrl;
+    providerBlock[providerOverride.type] = { options: opts };
+  }
+
   // ── Real OpenCode config schema ─────────────────────────────────────────────
   return {
     $schema: 'https://opencode.ai/config.json',
     model,
-    provider: {
-      'github-copilot': {
-        options: { apiKey: githubToken },
-      },
-    },
+    provider: providerBlock,
     mcp: mcpServers,
     agent: {
       [agentConfig.type]: {

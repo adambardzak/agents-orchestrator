@@ -6,8 +6,13 @@
  *   - custom skills (CRUD via PATCH/DELETE on `dbId`) defined in active org
  *
  * Built-in entries don't have `dbId` — UI uses `isBuiltIn` to gate the
- * Edit/Delete actions.
+ * Edit/Delete actions. Custom skills with the same id (`skill:<slug>`) as a
+ * built-in shadow it, letting users override built-ins per org.
  */
+export type SkillCategory =
+  | 'frontend' | 'backend' | 'database' | 'devops' | 'testing'
+  | 'security' | 'ai-llm' | 'seo' | 'tooling' | 'other';
+
 export interface SkillEntry {
   id:                 string;       // public id, "skill:<slug>"
   name:               string;
@@ -16,6 +21,8 @@ export interface SkillEntry {
   rules:              string[];
   requiredMcpServers: string[];
   isBuiltIn:          boolean;
+  icon?:              string;
+  category?:          SkillCategory;
   // custom-only fields
   dbId?:              string;
   organizationId?:    string;
@@ -23,6 +30,28 @@ export interface SkillEntry {
   enabled?:           boolean;
   createdAt?:         string;
   updatedAt?:         string;
+}
+
+export interface SkillCreateInput {
+  slug:               string;
+  name:               string;
+  description?:       string;
+  icon?:              string;
+  category?:          SkillCategory;
+  knowledgeBlock:     string;
+  rules?:             string[];
+  requiredMcpServers?: string[];
+}
+
+export interface SkillUpdateInput {
+  name?:              string;
+  description?:       string;
+  icon?:              string | null;
+  category?:          SkillCategory | null;
+  knowledgeBlock?:    string;
+  rules?:             string[];
+  requiredMcpServers?: string[];
+  enabled?:           boolean;
 }
 
 export function useSkills() {
@@ -37,41 +66,32 @@ export function useSkills() {
     });
   }
 
-  async function list(): Promise<SkillEntry[]> {
-    const res = await req('/api/skills');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as { skills: SkillEntry[] };
-    return data.skills;
+  async function unwrap<T>(res: Response): Promise<T> {
+    if (res.ok) return (await res.json()) as T;
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `HTTP ${res.status}`);
   }
 
-  async function create(input: {
-    slug:               string;
-    name:               string;
-    description?:       string;
-    knowledgeBlock:     string;
-    rules?:             string[];
-    requiredMcpServers?: string[];
-  }): Promise<SkillEntry> {
-    const res = await req('/api/skills', { method: 'POST', body: JSON.stringify(input) });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(err.error ?? `HTTP ${res.status}`);
-    }
-    const data = (await res.json()) as { skill: SkillEntry };
+  async function list(): Promise<{ skills: SkillEntry[]; categories: readonly SkillCategory[] }> {
+    return unwrap(await req('/api/skills'));
+  }
+
+  /** Read-only built-in catalog. Powers the "fork as template" UX. */
+  async function catalog(): Promise<{ skills: SkillEntry[]; categories: readonly SkillCategory[] }> {
+    return unwrap(await req('/api/skills/catalog'));
+  }
+
+  async function create(input: SkillCreateInput): Promise<SkillEntry> {
+    const data = await unwrap<{ skill: SkillEntry }>(
+      await req('/api/skills', { method: 'POST', body: JSON.stringify(input) }),
+    );
     return data.skill;
   }
 
-  async function update(dbId: string, patch: {
-    name?:              string;
-    description?:       string;
-    knowledgeBlock?:    string;
-    rules?:             string[];
-    requiredMcpServers?: string[];
-    enabled?:           boolean;
-  }): Promise<SkillEntry> {
-    const res = await req(`/api/skills/${dbId}`, { method: 'PATCH', body: JSON.stringify(patch) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as { skill: SkillEntry };
+  async function update(dbId: string, patch: SkillUpdateInput): Promise<SkillEntry> {
+    const data = await unwrap<{ skill: SkillEntry }>(
+      await req(`/api/skills/${dbId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    );
     return data.skill;
   }
 
@@ -80,5 +100,5 @@ export function useSkills() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
-  return { list, create, update, remove };
+  return { list, catalog, create, update, remove };
 }

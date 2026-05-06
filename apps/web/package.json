@@ -16,8 +16,11 @@
     "@guolao/vue-monaco-editor": "^1.6.0",
     "@nuxt/ui": "^2.18.4",
     "@pinia/nuxt": "^0.5.4",
+    "@types/dompurify": "^3.2.0",
     "@vueuse/nuxt": "^10.11.0",
+    "dompurify": "^3.4.2",
     "lucide-vue-next": "^0.408.0",
+    "marked": "^18.0.3",
     "pinia": "^2.2.0"
   },
   "devDependencies": {

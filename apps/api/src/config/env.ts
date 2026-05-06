@@ -85,6 +85,21 @@ const envSchema = z.object({
   KB_MIN_SCORE:  z.coerce.number().min(0).max(1).default(0.45),
 
   /**
+   * Minimum cosine similarity (0..1) for a built-in/custom skill's knowledge
+   * block to be injected into a sub-agent's system prompt. Skills below the
+   * threshold are dropped (their `rules` are still preserved). 0 disables
+   * (legacy: always inject every declared skill).
+   *
+   * Defaulted lower than RAG/KB because skill blocks describe abstract
+   * patterns ("TypeScript strict mode") rather than concrete code/docs, so
+   * cosine scores against a task prompt run lower even when relevant.
+   *
+   * Safety net: when the filter would reject ALL skills it instead keeps the
+   * single highest-scoring one, so agents never lose all specialization.
+   */
+  SKILL_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.30),
+
+  /**
    * Hard cap on the verbatim `design-system/frontend-rules.md` body when
    * injected into the Frontend agent's system prompt. If the file exceeds
    * this many characters it is truncated and a warning is logged so the

@@ -22,6 +22,7 @@ import { getGitProvider } from '../services/git/registry.js';
 import { commitAll, pushBranch } from '../services/git/workspace-git.js';
 import { AIProviderService } from '../services/ai-providers/provider-service.js';
 import { KnowledgeService } from '../services/knowledge/knowledge-service.js';
+import { SkillRelevanceFilter } from '../services/skills/skill-relevance.js';
 import { QaRunner } from '../services/qa/qa-runner.js';
 import { resolveProviderModel } from '../services/ai-providers/complexity-map.js';
 import type { ProviderOverride } from '../services/model-router/router.js';
@@ -243,6 +244,9 @@ export class AgentWorker {
   /** Deterministic post-task QA runner (tsc/eslint/vitest/playwright). */
   private qaRunner: QaRunner;
 
+  /** Per-spawn skill relevance filter — drops irrelevant skill knowledge blocks. */
+  private skillFilter: SkillRelevanceFilter;
+
   constructor(deps: AgentWorkerDeps) {
     this.logger = deps.logger;
     this.processManager = deps.processManager;
@@ -257,6 +261,7 @@ export class AgentWorker {
     this.aiProviders = new AIProviderService(deps.db);
     this.knowledge = new KnowledgeService(deps.db, deps.logger, env.GITHUB_TOKEN, undefined, env.KB_MIN_SCORE);
     this.qaRunner = new QaRunner(deps.db, deps.logger);
+    this.skillFilter = new SkillRelevanceFilter(deps.logger, env.GITHUB_TOKEN, env.SKILL_MIN_SCORE);
 
     this.worker = new Worker<AgentJobData>(
       AGENT_QUEUE_NAME,
@@ -498,11 +503,32 @@ export class AgentWorker {
     // Falls back to Copilot routing when no provider is configured for the org.
     const providerOverride = await this.resolveProviderOverride(task);
 
+    // ── Trim irrelevant skills from the agent config ────────────────────────
+    // The agent's `.skills` array is statically declared but every skill ships
+    // a verbose knowledge block (~800–2300 chars). Drop those that don't match
+    // the task's intent based on cosine similarity. Built-in agent objects are
+    // shared across workers — never mutate; create a shallow clone.
+    let spawnAgentConfig = agentConfig;
+    if (agentConfig.skills.length > 0) {
+      try {
+        const filteredSkills = await this.skillFilter.selectRelevant(agentConfig.skills, task.prompt);
+        if (filteredSkills.length !== agentConfig.skills.length) {
+          spawnAgentConfig = { ...agentConfig, skills: filteredSkills };
+          this.logger.info(
+            { taskId: task.id, agentType: task.agentType, before: agentConfig.skills.length, after: filteredSkills.length },
+            'Filtered skill list for agent spawn',
+          );
+        }
+      } catch (err) {
+        this.logger.warn({ err, taskId: task.id }, 'skill-filter threw, falling back to full skill list');
+      }
+    }
+
     await new Promise<void>((resolve, reject) => {
       this.processManager
         .spawnAgent({
           task,
-          agentConfig,
+          agentConfig: spawnAgentConfig,
           workspacesRoot: env.WORKSPACES_ROOT,
           workspaceDir,
           githubToken,

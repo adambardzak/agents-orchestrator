@@ -461,6 +461,7 @@ const systemNav = [
   { to: '/settings/connections', label: 'Connections',  icon: 'i-ph-plug-light' },
   { to: '/settings/ai',          label: 'AI Providers', icon: 'i-ph-brain-light' },
   { to: '/settings/skills',      label: 'Skills',       icon: 'i-ph-lightbulb-light' },
+  { to: '/settings/knowledge',   label: 'Knowledge',    icon: 'i-ph-book-open-light' },
   { to: '/settings',             label: 'Settings',     icon: 'i-ph-gear-six-light' },
 ];
 

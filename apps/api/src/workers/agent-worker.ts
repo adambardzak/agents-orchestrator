@@ -21,6 +21,7 @@ import { GitConnectionService } from '../services/git/connection-service.js';
 import { getGitProvider } from '../services/git/registry.js';
 import { commitAll, pushBranch } from '../services/git/workspace-git.js';
 import { AIProviderService } from '../services/ai-providers/provider-service.js';
+import { KnowledgeService } from '../services/knowledge/knowledge-service.js';
 import { resolveProviderModel } from '../services/ai-providers/complexity-map.js';
 import type { ProviderOverride } from '../services/model-router/router.js';
 
@@ -235,6 +236,9 @@ export class AgentWorker {
   /** Lazy-initialized AI provider service for org-level provider overrides. */
   private aiProviders: AIProviderService;
 
+  /** Lazy-initialized KB service for org-level knowledge retrieval. */
+  private knowledge: KnowledgeService;
+
   constructor(deps: AgentWorkerDeps) {
     this.logger = deps.logger;
     this.processManager = deps.processManager;
@@ -247,6 +251,7 @@ export class AgentWorker {
     this.tickets = new TicketService(deps.db, deps.logger);
 
     this.aiProviders = new AIProviderService(deps.db);
+    this.knowledge = new KnowledgeService(deps.db, deps.logger, env.GITHUB_TOKEN);
 
     this.worker = new Worker<AgentJobData>(
       AGENT_QUEUE_NAME,
@@ -358,6 +363,27 @@ export class AgentWorker {
       } catch (err) {
         this.logger.warn({ err, taskId: task.id }, 'RAG retrieval failed, continuing without context');
       }
+    }
+
+    // ── KB: retrieve org-level knowledge base context ────────────────────────
+    // Org KB applies to all agent types (including document/qa/orchestrator —
+    // architectural docs and conventions matter to planners too).
+    try {
+      const { rows } = await this.db.query<{ organization_id: string | null }>(
+        `SELECT organization_id FROM projects WHERE id = $1`,
+        [task.projectId],
+      );
+      const orgId = rows[0]?.organization_id;
+      if (orgId) {
+        const kbHits = await this.knowledge.retrieveForOrg(orgId, task.prompt, 5);
+        if (kbHits.length > 0) {
+          const kbContext = this.knowledge.formatAsContext(kbHits);
+          resolvedExtraContext = (resolvedExtraContext ?? '') + '\n\n' + kbContext;
+          this.logger.info({ taskId: task.id, hits: kbHits.length }, 'KB context injected');
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, taskId: task.id }, 'KB retrieval failed, continuing without context');
     }
 
     // ── status: pending → running ────────────────────────────────────────────

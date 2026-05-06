@@ -85,7 +85,7 @@ services:
     restart: unless-stopped
     user: "0:0"
     ports:
-      - "127.0.0.1:8092:8080"
+      - "0.0.0.0:8092:8080"
     environment:
       PASSWORD: ${CODE_SERVER_PASSWORD}
       DOCKER_USER: root
@@ -105,6 +105,9 @@ services:
   # Public ports:
   #   :8091 → web (Nuxt) + /api/* + /ws/* proxied to api
   #   :8092 → code-server (its own auth, no basic auth needed)
+  # NOTE: BASIC_AUTH_HASH is a bcrypt hash. The .env entry MUST escape
+  #       every `$` as `$$` (compose interpolation) — e.g.
+  #       BASIC_AUTH_HASH=$$2a$$14$$abcdef...
   caddy:
     image: caddy:2-alpine
     container_name: orchestrator-caddy

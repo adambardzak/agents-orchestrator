@@ -119,7 +119,7 @@ jobs:
           # Fetch basic auth credential from server (held only there in .env)
           AUTH=$(ssh vps "grep ^BASIC_AUTH_PLAIN /opt/agent-orchestrator/.env | cut -d= -f2-")
           for i in $(seq 1 30); do
-            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' -u admin:${AUTH} http://127.0.0.1:8091/api/healthz" 2>/dev/null || echo "000")
+            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' -u admin:${AUTH} http://127.0.0.1:8091/api/health" 2>/dev/null || echo "000")
             echo "Attempt $i: HTTP $CODE"
             if [ "$CODE" = "200" ]; then
               echo "✓ Smoke test passed"

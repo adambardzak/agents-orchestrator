@@ -1,13 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { BUILT_IN_AGENTS } from '../agents/definitions.js';
-import { SKILL_CATALOG } from '../agents/skills.js';
 import { MCP_CATALOG, MCP_CATEGORIES } from '../agents/mcp-catalog.js';
 
 export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
-  // GET /api/skills — return the full skill catalog
-  fastify.get('/api/skills', async () => ({
-    skills: SKILL_CATALOG,
-  }));
+  // NOTE: GET /api/skills moved to routes/skills.ts (now returns built-in
+  // catalog merged with org-defined custom skills).
 
   // GET /api/mcp-servers — return the full MCP server catalog with categories
   fastify.get('/api/mcp-servers', async () => ({

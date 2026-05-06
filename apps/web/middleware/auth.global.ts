@@ -17,7 +17,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server) return;
 
   const auth = useAuth();
-  if (!auth.loaded.value) {
+  // Always refresh if not loaded OR if we somehow ended up "authenticated"
+  // without any orgs (state desync — e.g. SSR snapshot from a failed fetch
+  // that got hydrated before the bootstrap shim was available).
+  if (!auth.loaded.value || (auth.isAuthenticated.value && auth.orgs.value.length === 0)) {
     await auth.refresh();
   }
 

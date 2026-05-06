@@ -188,6 +188,10 @@
               Skills inject specialized knowledge blocks + rules into the agent's system prompt at spawn time.
             </p>
             <div v-if="skillsLoading" class="text-xs text-text-muted">Loading skills...</div>
+            <div v-else-if="availableSkills.length === 0" class="text-xs text-text-muted italic border border-dashed border-border rounded-md p-4 text-center">
+              No skills available. Create some in
+              <NuxtLink to="/settings/skills" class="text-accent hover:underline">Settings → Skills</NuxtLink>.
+            </div>
             <div v-else class="space-y-2">
               <button
                 v-for="skill in availableSkills"
@@ -324,16 +328,24 @@ const skillsLoading = ref(false);
 onMounted(async () => {
   skillsLoading.value = true;
   mcpLoading.value = true;
+  // Load independently so a failure in one doesn't blank the other.
   try {
-    const [skillRes, mcpRes] = await Promise.all([
-      apiStore.listSkills(),
-      apiStore.listMcpServers(),
-    ]);
+    const skillRes = await apiStore.listSkills();
     availableSkills.value = skillRes.skills;
+    console.log('[agents] loaded skills:', skillRes.skills.length);
+  } catch (err) {
+    console.error('[agents] listSkills failed:', err);
+  } finally {
+    skillsLoading.value = false;
+  }
+  try {
+    const mcpRes = await apiStore.listMcpServers();
     mcpServers.value = mcpRes.servers;
     mcpCategories.value = mcpRes.categories;
-  } catch { /* silently ignore */ } finally {
-    skillsLoading.value = false;
+    console.log('[agents] loaded mcp:', mcpRes.servers.length, 'servers,', mcpRes.categories.length, 'categories');
+  } catch (err) {
+    console.error('[agents] listMcpServers failed:', err);
+  } finally {
     mcpLoading.value = false;
   }
 });

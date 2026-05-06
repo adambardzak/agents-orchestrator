@@ -117,6 +117,7 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
           id:    BOOTSTRAP_USER.id,
           email: BOOTSTRAP_USER.email,
           name:  BOOTSTRAP_USER.name,
+          image: null,
         },
         session: {
           id:                      'bootstrap',

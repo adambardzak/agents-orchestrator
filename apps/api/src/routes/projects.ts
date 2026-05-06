@@ -5,6 +5,7 @@ import nodePath from 'node:path';
 import { promises as fs } from 'node:fs';
 import { env } from '../config/env.js';
 import { GitConnectionService } from '../services/git/connection-service.js';
+import { OrganizationService } from '../services/auth/organization-service.js';
 import { ProjectRepoService } from '../services/git/project-repo-service.js';
 import { getGitProvider } from '../services/git/registry.js';
 import { cloneRepo } from '../services/git/workspace-git.js';
@@ -183,7 +184,22 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /api/projects — create project + provision workspace + optional git repo
   fastify.post('/api/projects', async (request, reply) => {
     const user  = await request.requireUser();
-    const orgId = request.session?.activeOrganizationId ?? null;
+    let orgId   = request.session?.activeOrganizationId ?? null;
+
+    // Fallback: if the session has no active org (e.g. dev session was reset),
+    // pick the user's first membership so project creation doesn't 500 with a
+    // NOT NULL violation. The user can move the project later via re-create
+    // once we add per-project workspace assignment.
+    if (!orgId) {
+      const orgs = new OrganizationService(fastify.pg.pool);
+      const list = await orgs.listForUser(user.id);
+      orgId = list[0]?.id ?? null;
+      if (!orgId) {
+        return reply.status(400).send({
+          error: 'No workspace selected. Create or activate a workspace first.',
+        });
+      }
+    }
 
     const body = createProjectSchema.parse(request.body);
     const id = uuid();

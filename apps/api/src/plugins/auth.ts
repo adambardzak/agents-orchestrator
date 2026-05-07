@@ -128,6 +128,41 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
     });
   }
 
+  // 1b) Production interceptor for GET /api/auth/get-session — Better Auth
+  //     does not surface our custom `active_organization_id` column on the
+  //     session payload, so the FE never sees an active org and reverts to
+  //     "No active organization" UX. Inject it from the DB after BA runs.
+  if (env.REQUIRE_AUTH) {
+    fastify.get('/api/auth/get-session', async (request, reply) => {
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(request.headers)) {
+        if (typeof v === 'string') headers.set(k, v);
+      }
+      const result = await auth.api.getSession({ headers });
+      if (!result || !result.user || !result.session) {
+        return reply.send(null);
+      }
+      const sessionId = (result.session as { id: string }).id;
+      let activeOrgId: string | null = null;
+      try {
+        const { rows: [r] } = await fastify.pg.pool.query<{ active_organization_id: string | null }>(
+          `SELECT active_organization_id FROM auth_session WHERE id = $1`,
+          [sessionId],
+        );
+        activeOrgId = r?.active_organization_id ?? null;
+      } catch (err) {
+        request.log.warn({ err, sessionId }, 'failed to load active_organization_id');
+      }
+      return reply.send({
+        user: result.user,
+        session: {
+          ...(result.session as object),
+          active_organization_id: activeOrgId,
+        },
+      });
+    });
+  }
+
   fastify.all('/api/auth/*', async (request, reply) => {
     const url = new URL(request.url, env.APP_URL);
     const headers = new Headers();

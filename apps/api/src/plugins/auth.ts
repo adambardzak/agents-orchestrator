@@ -188,10 +188,29 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
       }
       if (result?.session) {
         const s = result.session as Record<string, unknown>;
+        const sessionId = String(s['id']);
+
+        // Better Auth's getSession does not surface our custom
+        // `active_organization_id` column on auth_session. Read it directly so
+        // requireOrg() can enforce tenant isolation. Cheap (PK lookup) and the
+        // result is per-request only.
+        let activeOrgId = (s['activeOrganizationId'] as string | null) ?? null;
+        if (!activeOrgId) {
+          try {
+            const { rows: [r] } = await fastify.pg.pool.query<{ active_organization_id: string | null }>(
+              `SELECT active_organization_id FROM auth_session WHERE id = $1`,
+              [sessionId],
+            );
+            if (r?.active_organization_id) activeOrgId = r.active_organization_id;
+          } catch (err) {
+            request.log.warn({ err, sessionId }, 'failed to load active_organization_id');
+          }
+        }
+
         request.session = {
-          id: String(s['id']),
+          id: sessionId,
           userId: String(s['userId']),
-          activeOrganizationId: (s['activeOrganizationId'] as string | null) ?? null,
+          activeOrganizationId: activeOrgId,
           expiresAt: new Date(s['expiresAt'] as string),
         };
       }

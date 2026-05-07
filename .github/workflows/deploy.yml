@@ -116,10 +116,11 @@ jobs:
       - name: Smoke test
         run: |
           set -e
-          # Fetch basic auth credential from server (held only there in .env)
-          AUTH=$(ssh vps "grep ^BASIC_AUTH_PLAIN /opt/agent-orchestrator/.env | cut -d= -f2-")
+          # Hit API directly on the host-bound internal port to bypass Caddy's
+          # IP allowlist (the smoke would appear as docker bridge IP and get
+          # blocked). The internal port is bound to 127.0.0.1 only on the VPS.
           for i in $(seq 1 30); do
-            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' -u admin:${AUTH} http://127.0.0.1:8091/api/health" 2>/dev/null || echo "000")
+            CODE=$(ssh vps "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:33002/api/health" 2>/dev/null || echo "000")
             echo "Attempt $i: HTTP $CODE"
             if [ "$CODE" = "200" ]; then
               echo "✓ Smoke test passed"

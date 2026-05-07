@@ -138,6 +138,14 @@ const envSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 
+  /** Set Secure flag on auth cookies. Defaults to true in production, but
+   *  must be disabled when serving over plain HTTP (e.g. before LE on a
+   *  public IP) — otherwise the browser drops the session cookie. */
+  AUTH_COOKIES_SECURE: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
+
   // ── Per-context env vars injected into agent processes ───────────────────
 
   // Personal context

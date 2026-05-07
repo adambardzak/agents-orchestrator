@@ -123,9 +123,11 @@ export function getAuth(): AuthInstance {
     advanced: {
       // Cookies must be readable by the Nuxt app served on a different port
       // in dev. In prod we run them on the same origin behind nginx.
+      // AUTH_COOKIES_SECURE overrides the NODE_ENV-derived default — must be
+      // 'false' when serving over plain HTTP, or the browser drops the cookie.
       defaultCookieAttributes: {
         sameSite: 'lax',
-        secure: env.NODE_ENV === 'production',
+        secure: env.AUTH_COOKIES_SECURE ?? (env.NODE_ENV === 'production'),
       },
     },
   };

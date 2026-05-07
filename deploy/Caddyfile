@@ -23,6 +23,12 @@
 			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 		}
 
+		# Nuxt UI's icon server lives under /api/_nuxt_icon/* on the web app,
+		# so it must be matched BEFORE the generic /api/* → fastify rule.
+		handle /api/_nuxt_icon/* {
+			reverse_proxy web:3000
+		}
+
 		# API prefix → fastify on :3001 inside docker network.
 		handle /api/* {
 			reverse_proxy api:3001

@@ -53,6 +53,7 @@ services:
       OPENCODE_BINARY:  /usr/local/bin/opencode
       LOG_LEVEL:        ${LOG_LEVEL:-info}
       CODE_SERVER_URL:  ${CODE_SERVER_URL}
+      AUTH_COOKIES_SECURE: ${AUTH_COOKIES_SECURE:-true}
     volumes:
       - workspaces:/workspaces
       - opencode_auth:/root/.local/share/opencode

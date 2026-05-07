@@ -1,18 +1,30 @@
 import type { FastifyInstance } from 'fastify';
 import type WebSocket from 'ws';
+import { assertSessionAccess } from '../services/auth/access.js';
 
 export async function wsRoutes(fastify: FastifyInstance): Promise<void> {
   // WebSocket endpoint: /ws?sessionId=xxx[&taskIds=id1,id2]
   fastify.get(
     '/ws',
     { websocket: true },
-    (socket: WebSocket, request) => {
+    async (socket: WebSocket, request) => {
       const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
       const sessionId = url.searchParams.get('sessionId');
       const taskIdsParam = url.searchParams.get('taskIds');
 
       if (!sessionId) {
         socket.close(1008, 'sessionId query parameter required');
+        return;
+      }
+
+      // Auth & tenant isolation: verify user belongs to the session's org
+      try {
+        const { orgId } = await request.requireOrg();
+        await assertSessionAccess(fastify, sessionId, orgId);
+      } catch (err) {
+        const status = (err as { statusCode?: number }).statusCode;
+        const code = status === 401 ? 1008 : status === 404 ? 1008 : 1011;
+        socket.close(code, status === 401 ? 'Unauthorized' : 'Forbidden');
         return;
       }
 

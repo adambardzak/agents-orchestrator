@@ -6,6 +6,7 @@ import { TicketService } from '../services/tickets/ticket-service.js';
 import { getAgentByType } from '../agents/definitions.js';
 import { resolveModel } from '../services/model-router/router.js';
 import { env } from '../config/env.js';
+import { assertSessionAccess, assertTicketAccess } from '../services/auth/access.js';
 
 const reopenSchema = z.object({
   comment: z.string().min(1).max(10_000).optional(),
@@ -24,12 +25,16 @@ export async function ticketRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ── List tickets for a session ─────────────────────────────────────────────
   fastify.get<{ Params: { id: string } }>('/api/sessions/:id/tickets', async (req) => {
+    const { orgId } = await req.requireOrg();
+    await assertSessionAccess(fastify, req.params.id, orgId);
     const list = await tickets.listBySession(req.params.id);
     return { tickets: list };
   });
 
   // ── Get ticket detail (with comments + iterations) ─────────────────────────
   fastify.get<{ Params: { id: string } }>('/api/tickets/:id', async (req, reply) => {
+    const { orgId } = await req.requireOrg();
+    await assertTicketAccess(fastify, req.params.id, orgId);
     const ticket = await tickets.getById(req.params.id);
     if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
     const [comments, iterations] = await Promise.all([
@@ -43,6 +48,8 @@ export async function ticketRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Params: { id: string }; Body: { body: string } }>(
     '/api/tickets/:id/comments',
     async (req, reply) => {
+      const { orgId } = await req.requireOrg();
+      await assertTicketAccess(fastify, req.params.id, orgId);
       const body = addCommentSchema.parse(req.body);
       const ticket = await tickets.getById(req.params.id);
       if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
@@ -59,6 +66,8 @@ export async function ticketRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.patch<{ Params: { id: string }; Body: { status: string } }>(
     '/api/tickets/:id/status',
     async (req, reply) => {
+      const { orgId } = await req.requireOrg();
+      await assertTicketAccess(fastify, req.params.id, orgId);
       const body = updateStatusSchema.parse(req.body);
       const ticket = await tickets.getById(req.params.id);
       if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
@@ -79,6 +88,8 @@ export async function ticketRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Params: { id: string }; Body: { comment?: string } }>(
     '/api/tickets/:id/reopen',
     async (req, reply) => {
+      const { orgId } = await req.requireOrg();
+      await assertTicketAccess(fastify, req.params.id, orgId);
       const body = reopenSchema.parse(req.body ?? {});
       const githubToken =
         (req.headers['x-github-token'] as string) ?? env.GITHUB_TOKEN ?? '';

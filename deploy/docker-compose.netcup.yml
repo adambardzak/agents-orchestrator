@@ -121,6 +121,8 @@ services:
     environment:
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:-admin}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
+      # Comma-separated CIDR allowlist; default 0.0.0.0/0 allows all if unset.
+      ALLOWED_IPS: ${ALLOWED_IPS:-0.0.0.0/0}
     depends_on: [web, api]
     networks: [orchestrator-net]
 

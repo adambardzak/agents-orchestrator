@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { assertProjectAccess } from '../services/auth/access.js';
 
 // Sonnet price — used as "standard" reference for savings calculation
 const SONNET_INPUT_PER_1M = 3;
@@ -8,20 +9,36 @@ export async function costRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * GET /api/costs/summary
    *
-   * Returns aggregated cost data across all sessions:
+   * Returns aggregated cost data across all sessions IN THE CALLER'S ACTIVE ORG:
    *  - Totals by period (today / this week / this month / all-time)
    *  - Breakdown by model
    *  - Breakdown by agent type
    *  - Savings from model routing vs "all on Sonnet"
    *  - Recent sessions with individual costs
+   *
+   * Optional ?projectId= further narrows to a single project (must belong to
+   * caller's org or 404).
    */
   fastify.get<{ Querystring: { projectId?: string } }>(
     '/api/costs/summary',
     async (request) => {
+      const { orgId } = await request.requireOrg();
       const { projectId } = request.query;
 
-      const filterClause = projectId ? 'AND t.project_id = $1' : '';
-      const filterParams = projectId ? [projectId] : [];
+      // Validate projectId belongs to org BEFORE running any aggregates.
+      if (projectId) {
+        await assertProjectAccess(fastify, projectId, orgId);
+      }
+
+      // All task/session queries gain a JOIN through projects to filter by org.
+      // $1 = orgId, $2 (optional) = projectId.
+      const orgFilter = projectId
+        ? 'p.organization_id = $1 AND t.project_id = $2'
+        : 'p.organization_id = $1';
+      const sessionsOrgFilter = projectId
+        ? 'p.organization_id = $1 AND s.project_id = $2'
+        : 'p.organization_id = $1';
+      const params = projectId ? [orgId, projectId] : [orgId];
 
       // ── Period totals ────────────────────────────────────────────────────────
       const periodQuery = `
@@ -33,7 +50,8 @@ export async function costRoutes(fastify: FastifyInstance): Promise<void> {
           SUM(t.input_tokens)                                                                            AS total_input_tokens,
           SUM(t.output_tokens)                                                                           AS total_output_tokens
         FROM agent_tasks t
-        WHERE t.status = 'completed' ${filterClause}`;
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.status = 'completed' AND ${orgFilter}`;
 
       // ── By model ──────────────────────────────────────────────────────────────
       const modelQuery = `
@@ -44,7 +62,8 @@ export async function costRoutes(fastify: FastifyInstance): Promise<void> {
           SUM(t.output_tokens)    AS output_tokens,
           SUM(t.cost_usd)         AS cost_usd
         FROM agent_tasks t
-        WHERE t.status = 'completed' ${filterClause}
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.status = 'completed' AND ${orgFilter}
         GROUP BY t.model
         ORDER BY cost_usd DESC`;
 
@@ -57,7 +76,8 @@ export async function costRoutes(fastify: FastifyInstance): Promise<void> {
           SUM(t.output_tokens)    AS output_tokens,
           SUM(t.cost_usd)         AS cost_usd
         FROM agent_tasks t
-        WHERE t.status = 'completed' ${filterClause}
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.status = 'completed' AND ${orgFilter}
         GROUP BY t.agent_type
         ORDER BY cost_usd DESC`;
 
@@ -68,9 +88,10 @@ export async function costRoutes(fastify: FastifyInstance): Promise<void> {
           SUM(t.cost_usd)         AS cost_usd,
           COUNT(DISTINCT t.session_id)::int AS sessions
         FROM agent_tasks t
+        JOIN projects p ON p.id = t.project_id
         WHERE t.status = 'completed'
           AND t.created_at >= NOW() - INTERVAL '14 days'
-          ${filterClause}
+          AND ${orgFilter}
         GROUP BY DATE(t.created_at)
         ORDER BY date ASC`;
 
@@ -85,18 +106,19 @@ export async function costRoutes(fastify: FastifyInstance): Promise<void> {
           COALESCE(SUM(t.input_tokens), 0) AS input_tokens,
           COALESCE(SUM(t.output_tokens), 0) AS output_tokens
         FROM sessions s
+        JOIN projects p ON p.id = s.project_id
         LEFT JOIN agent_tasks t ON t.session_id = s.id AND t.status = 'completed'
-        ${projectId ? 'WHERE s.project_id = $1' : ''}
+        WHERE ${sessionsOrgFilter}
         GROUP BY s.id, s.user_prompt, s.status, s.created_at
         ORDER BY s.created_at DESC
         LIMIT 20`;
 
       const [periods, byModel, byAgent, trend, recentSessions] = await Promise.all([
-        fastify.pg.query(periodQuery, filterParams),
-        fastify.pg.query(modelQuery, filterParams),
-        fastify.pg.query(agentQuery, filterParams),
-        fastify.pg.query(trendQuery, filterParams),
-        fastify.pg.query(sessionsQuery, filterParams),
+        fastify.pg.query(periodQuery, params),
+        fastify.pg.query(modelQuery, params),
+        fastify.pg.query(agentQuery, params),
+        fastify.pg.query(trendQuery, params),
+        fastify.pg.query(sessionsQuery, params),
       ]);
 
       const p = periods.rows[0] as {

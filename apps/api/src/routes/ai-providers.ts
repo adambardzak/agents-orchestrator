@@ -138,9 +138,13 @@ export async function aiProviderRoutes(fastify: FastifyInstance): Promise<void> 
   fastify.post<{ Params: { id: string } }>(
     '/api/ai-providers/:id/test',
     async (request, reply) => {
-      await request.requireUser();
+      const { user, orgId } = await request.requireOrg();
       const existing = await service.getById(request.params.id);
       if (!existing) return reply.status(404).send({ error: 'Not found' });
+      if (existing.organizationId !== orgId) return reply.status(404).send({ error: 'Not found' });
+      if (existing.userId && existing.userId !== user.id) {
+        return reply.status(404).send({ error: 'Not found' });
+      }
       const apiKey = await service.getApiKey(request.params.id);
       const result = await testApiKey({
         provider: existing.provider,

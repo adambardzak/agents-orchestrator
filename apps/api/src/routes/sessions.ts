@@ -11,6 +11,7 @@ import { mapSession, mapTask } from '../db/mappers.js';
 import { createBranchFrom, getDiff, mergeBranch, pushBranch } from '../services/git/workspace-git.js';
 import { getGitProvider } from '../services/git/registry.js';
 import { GitConnectionService } from '../services/git/connection-service.js';
+import { assertProjectAccess, assertSessionAccess } from '../services/auth/access.js';
 
 /**
  * Read a git_connections row and return the plaintext access token paired
@@ -136,7 +137,9 @@ function sanitizeReferencedFiles(input: string[]): string[] {
 export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
   // ── POST /api/sessions — start a new orchestration session ──────────────────
   fastify.post('/api/sessions', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const body = createSessionSchema.parse(request.body);
+    await assertProjectAccess(fastify, body.projectId, orgId);
     const githubToken = (request.headers['x-github-token'] as string) ?? env.GITHUB_TOKEN ?? '';
 
     if (!githubToken) {
@@ -252,19 +255,23 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Querystring: { limit?: string; projectId?: string; kind?: string; parent?: string } }>(
     '/api/sessions',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
       const limit = Math.min(parseInt(request.query.limit ?? '30', 10), 100);
       const { projectId, kind, parent } = request.query;
 
-      const conds: string[] = [];
-      const params: unknown[] = [limit];
-      if (projectId) { conds.push(`project_id = $${params.length + 1}`); params.push(projectId); }
-      if (kind)      { conds.push(`kind       = $${params.length + 1}`); params.push(kind); }
-      if (parent)    { conds.push(`parent_session_id = $${params.length + 1}`); params.push(parent); }
+      const conds: string[] = ['p.organization_id = $2'];
+      const params: unknown[] = [limit, orgId];
 
-      const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+      if (projectId) { conds.push(`s.project_id = $${params.length + 1}`); params.push(projectId); }
+      if (kind)      { conds.push(`s.kind       = $${params.length + 1}`); params.push(kind); }
+      if (parent)    { conds.push(`s.parent_session_id = $${params.length + 1}`); params.push(parent); }
+
+      const where = `WHERE ${conds.join(' AND ')}`;
       const { rows } = await fastify.pg.query(
-        `SELECT * FROM sessions ${where}
-          ORDER BY created_at DESC
+        `SELECT s.* FROM sessions s
+           JOIN projects p ON p.id = s.project_id
+         ${where}
+          ORDER BY s.created_at DESC
           LIMIT $1`,
         params,
       );
@@ -275,7 +282,9 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ── GET /api/sessions/:id ────────────────────────────────────────────────────
   fastify.get<{ Params: { id: string } }>('/api/sessions/:id', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertSessionAccess(fastify, id, orgId);
 
     const { rows: [sessionRow] } = await fastify.pg.query(
       `SELECT s.*, p.workspace_path AS project_workspace_path, p.name AS project_name
@@ -310,7 +319,9 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { id: string }; Querystring: { taskId?: string; limit?: string } }>(
     '/api/sessions/:id/events',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
       const { id } = request.params;
+      await assertSessionAccess(fastify, id, orgId);
       const { taskId, limit = '200' } = request.query;
 
       let query: string;
@@ -339,7 +350,9 @@ export async function sessionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Params: { id: string } }>(
     '/api/sessions/:id/clarify',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
       const { id: sessionId } = request.params;
+      await assertSessionAccess(fastify, sessionId, orgId);
       const githubToken = (request.headers['x-github-token'] as string) ?? env.GITHUB_TOKEN ?? '';
 
       const body = z.object({
@@ -474,7 +487,9 @@ Please now produce the execution plan (no further clarification needed).`;
   fastify.post<{ Params: { id: string } }>(
     '/api/sessions/:id/branch',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
       const parentId = request.params.id;
+      await assertSessionAccess(fastify, parentId, orgId);
       const body = z.object({
         name:        z.string().min(1).max(120).optional(),
         scopeGlobs:  z.array(z.string().min(1).max(200)).max(50).default([]),
@@ -561,6 +576,8 @@ Please now produce the execution plan (no further clarification needed).`;
   fastify.get<{ Params: { id: string } }>(
     '/api/sessions/:id/diff',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
+      await assertSessionAccess(fastify, request.params.id, orgId);
       const { rows: [row] } = await fastify.pg.query(
         'SELECT * FROM sessions WHERE id = $1',
         [request.params.id],
@@ -611,6 +628,7 @@ Please now produce the execution plan (no further clarification needed).`;
   fastify.patch<{ Params: { id: string } }>(
     '/api/sessions/:id',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
       const body = z.object({
         name:        z.string().min(1).max(120).nullable().optional(),
         scopeGlobs:  z.array(z.string().min(1).max(200)).max(50).optional(),
@@ -624,6 +642,8 @@ Please now produce the execution plan (no further clarification needed).`;
       if (!UUID_RE.test(request.params.id)) {
         return reply.status(404).send({ error: 'Session not found' });
       }
+
+      await assertSessionAccess(fastify, request.params.id, orgId);
 
       const { rows: [row] } = await fastify.pg.query(
         'SELECT * FROM sessions WHERE id = $1',
@@ -670,6 +690,8 @@ Please now produce the execution plan (no further clarification needed).`;
   fastify.post<{ Params: { id: string }; Body: { createPullRequest?: boolean } }>(
     '/api/sessions/:id/merge',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
+      await assertSessionAccess(fastify, request.params.id, orgId);
       const body = request.body ?? {};
       const wantsPR = body.createPullRequest === true;
 
@@ -835,7 +857,9 @@ Please now produce the execution plan (no further clarification needed).`;
 
   // ── DELETE /api/sessions/:id — cancel running tasks then delete the session ──
   fastify.delete<{ Params: { id: string } }>('/api/sessions/:id', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertSessionAccess(fastify, id, orgId);
 
     // Stop any running/pending tasks first
     const { rows: tasks } = await fastify.pg.query<{ id: string }>(

@@ -9,35 +9,33 @@
 }
 
 :8091 {
-	# All paths require basic auth.
-	basic_auth {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
+	# IP allowlist (defense-in-depth, in front of basic auth).
+	# Comma-separated list of CIDRs in $ALLOWED_IPS, e.g. "1.2.3.4/32,5.6.0.0/16".
+	# Default 0.0.0.0/0 = allow all (basic auth still required).
+	@blocked not client_ip {$ALLOWED_IPS:0.0.0.0/0}
 
-	# API prefix → fastify on :3001 inside docker network.
-	# Use `handle` (not `handle_path`) so the /api prefix is preserved
-	# — Fastify routes are registered under /api/* (e.g. /api/auth/*).
-	handle /api/* {
-		reverse_proxy api:3001 {
-			header_up Host {host}
-			header_up X-Real-IP {remote}
-			header_up X-Forwarded-For {remote}
-			header_up X-Forwarded-Proto {scheme}
+	# `route` enforces explicit ordering; abort runs FIRST, before basic_auth/handle.
+	route {
+		abort @blocked
+
+		# All paths require basic auth.
+		basic_auth {
+			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 		}
-	}
 
-	# WebSocket events — same prefix-preserving rule.
-	handle /ws/* {
-		reverse_proxy api:3001
-	}
+		# API prefix → fastify on :3001 inside docker network.
+		handle /api/* {
+			reverse_proxy api:3001
+		}
 
-	# Everything else → Nuxt
-	handle {
-		reverse_proxy web:3000 {
-			header_up Host {host}
-			header_up X-Real-IP {remote}
-			header_up X-Forwarded-For {remote}
-			header_up X-Forwarded-Proto {scheme}
+		# WebSocket events.
+		handle /ws/* {
+			reverse_proxy api:3001
+		}
+
+		# Everything else → Nuxt
+		handle {
+			reverse_proxy web:3000
 		}
 	}
 

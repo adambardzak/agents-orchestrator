@@ -7,6 +7,7 @@ import { env } from '../config/env.js';
 import { GitConnectionService } from '../services/git/connection-service.js';
 import { OrganizationService } from '../services/auth/organization-service.js';
 import { ProjectRepoService } from '../services/git/project-repo-service.js';
+import { assertProjectAccess, assertSessionAccess } from '../services/auth/access.js';
 import { getGitProvider } from '../services/git/registry.js';
 import { cloneRepo } from '../services/git/workspace-git.js';
 
@@ -129,8 +130,9 @@ async function buildFileTree(
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
-  // GET /api/projects — list with session stats
-  fastify.get('/api/projects', async () => {
+  // GET /api/projects — list with session stats (filtered to caller's active org)
+  fastify.get('/api/projects', async (request) => {
+    const { orgId } = await request.requireOrg();
     const { rows } = await fastify.pg.query<{
       id: string; name: string; description: string | null;
       context_type: string; workspace_path: string;
@@ -144,9 +146,10 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
         MAX(s.created_at)                    AS last_session_at
       FROM projects p
       LEFT JOIN sessions s ON s.project_id = p.id
+      WHERE p.organization_id = $1
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `);
+    `, [orgId]);
 
     return {
       projects: rows.map((r) => ({
@@ -167,12 +170,13 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // GET /api/projects/:id
-  fastify.get<{ Params: { id: string } }>('/api/projects/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/projects/:id', async (request) => {
+    const { orgId } = await request.requireOrg();
+    await assertProjectAccess(fastify, request.params.id, orgId);
     const { rows: [project] } = await fastify.pg.query(
       'SELECT * FROM projects WHERE id = $1',
       [request.params.id],
     );
-    if (!project) return reply.status(404).send({ error: 'Project not found' });
     return {
       ...project,
       workspacePath: project.workspace_path,
@@ -333,13 +337,9 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /api/projects/:id/files — recursive directory listing
   fastify.get<{ Params: { id: string } }>(
     '/api/projects/:id/files',
-    async (request, reply) => {
-      const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
-        'SELECT workspace_path FROM projects WHERE id = $1',
-        [request.params.id],
-      );
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
-
+    async (request) => {
+      const { orgId } = await request.requireOrg();
+      const project = await assertProjectAccess(fastify, request.params.id, orgId);
       const workspacePath = project.workspace_path;
 
       // Auto-create workspace if it doesn't exist yet
@@ -365,11 +365,8 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   }>(
     '/api/projects/:id/files/content',
     async (request, reply) => {
-      const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
-        'SELECT workspace_path FROM projects WHERE id = $1',
-        [request.params.id],
-      );
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      const { orgId } = await request.requireOrg();
+      const project = await assertProjectAccess(fastify, request.params.id, orgId);
 
       const relPath = request.query.path;
       if (!relPath) return reply.status(400).send({ error: 'path query param required' });
@@ -428,22 +425,19 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
 
   // DELETE /api/projects/:id
   fastify.delete<{ Params: { id: string } }>('/api/projects/:id', async (request, reply) => {
-    const { id } = request.params;
-    const { rowCount } = await fastify.pg.query(
-      'DELETE FROM projects WHERE id = $1',
-      [id],
+    const { orgId } = await request.requireOrg();
+    await assertProjectAccess(fastify, request.params.id, orgId);
+    await fastify.pg.query(
+      'DELETE FROM projects WHERE id = $1 AND organization_id = $2',
+      [request.params.id, orgId],
     );
-    if (!rowCount) return reply.status(404).send({ error: 'Project not found' });
     return reply.status(204).send();
   });
 
   // POST /api/projects/:id/index — trigger RAG indexing of workspace files
-  fastify.post<{ Params: { id: string } }>('/api/projects/:id/index', async (request, reply) => {
-    const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
-      'SELECT workspace_path FROM projects WHERE id = $1',
-      [request.params.id],
-    );
-    if (!project) return reply.status(404).send({ error: 'Project not found' });
+  fastify.post<{ Params: { id: string } }>('/api/projects/:id/index', async (request) => {
+    const { orgId } = await request.requireOrg();
+    const project = await assertProjectAccess(fastify, request.params.id, orgId);
 
     // Fire-and-forget — indexing can take a while
     fastify.ragService.indexProjectFiles(request.params.id, project.workspace_path)
@@ -457,14 +451,11 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { id: string }; Querystring: { q: string; k?: string } }>(
     '/api/projects/:id/rag',
     async (request, reply) => {
+      const { orgId } = await request.requireOrg();
       const { q, k } = request.query;
       if (!q?.trim()) return reply.status(400).send({ error: 'q is required' });
 
-      const { rows: [project] } = await fastify.pg.query<{ id: string }>(
-        'SELECT id FROM projects WHERE id = $1',
-        [request.params.id],
-      );
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      await assertProjectAccess(fastify, request.params.id, orgId);
 
       const chunks = await fastify.ragService.retrieveContext(
         request.params.id,
@@ -483,6 +474,8 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { id: string } }>(
     '/api/projects/:id/repo',
     async (request) => {
+      const { orgId } = await request.requireOrg();
+      await assertProjectAccess(fastify, request.params.id, orgId);
       const repos = new ProjectRepoService(fastify.pg.pool);
       const repo = await repos.getByProject(request.params.id);
       return { repo };
@@ -492,12 +485,9 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /api/projects/:id/git/status — working tree status
   fastify.get<{ Params: { id: string } }>(
     '/api/projects/:id/git/status',
-    async (request, reply) => {
-      const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
-        'SELECT workspace_path FROM projects WHERE id = $1',
-        [request.params.id],
-      );
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
+    async (request) => {
+      const { orgId } = await request.requireOrg();
+      const project = await assertProjectAccess(fastify, request.params.id, orgId);
       try {
         const { getStatus } = await import('../services/git/workspace-git.js');
         const status = await getStatus(project.workspace_path);
@@ -514,11 +504,8 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
     '/api/projects/:id/git/diff',
     async (request, reply) => {
-      const { rows: [project] } = await fastify.pg.query<{ workspace_path: string }>(
-        'SELECT workspace_path FROM projects WHERE id = $1',
-        [request.params.id],
-      );
-      if (!project) return reply.status(404).send({ error: 'Project not found' });
+      const { orgId } = await request.requireOrg();
+      const project = await assertProjectAccess(fastify, request.params.id, orgId);
       try {
         const { getDiff } = await import('../services/git/workspace-git.js');
         const diff = await getDiff({
@@ -538,6 +525,8 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get<{ Params: { id: string } }>(
     '/api/sessions/:id/commits',
     async (request) => {
+      const { orgId } = await request.requireOrg();
+      await assertSessionAccess(fastify, request.params.id, orgId);
       const repos = new ProjectRepoService(fastify.pg.pool);
       const commits = await repos.listForSession(request.params.id);
       return { commits };

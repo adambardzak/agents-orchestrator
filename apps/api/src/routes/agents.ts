@@ -13,9 +13,18 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
   }));
 
   // GET /api/agents — list all agents (built-in + custom from DB)
-  fastify.get('/api/agents', async () => {
+  // NOTE: agent_definitions schema currently lacks organization_id; we filter
+  // by created_by (user id) as an interim measure. A future migration should
+  // add organization_id and switch this to org-level isolation. See
+  // coding-agent-orchestrator-spec-v3 §custom-agents.
+  fastify.get('/api/agents', async (request) => {
+    const user = await request.requireUser();
     const { rows: customAgents } = await fastify.pg.query(
-      'SELECT * FROM agent_definitions WHERE is_active = true ORDER BY created_at',
+      `SELECT * FROM agent_definitions
+        WHERE is_active = true
+          AND (created_by = $1 OR created_by = 'user' OR created_by = 'system')
+        ORDER BY created_at`,
+      [user.id],
     );
 
     return {
@@ -28,16 +37,19 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
 
   // GET /api/agents/:id
   fastify.get<{ Params: { id: string } }>('/api/agents/:id', async (request, reply) => {
+    const user = await request.requireUser();
     const { id } = request.params;
 
     // Check built-in first
     const builtIn = BUILT_IN_AGENTS.find((a: typeof BUILT_IN_AGENTS[number]) => a.id === id);
     if (builtIn) return builtIn;
 
-    // Check DB
+    // Check DB — restrict to creator (interim, until org_id is added)
     const { rows: [agent] } = await fastify.pg.query(
-      'SELECT * FROM agent_definitions WHERE id = $1',
-      [id],
+      `SELECT * FROM agent_definitions
+        WHERE id = $1
+          AND (created_by = $2 OR created_by = 'user' OR created_by = 'system')`,
+      [id, user.id],
     );
 
     if (!agent) {
@@ -49,6 +61,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
 
   // POST /api/agents — create custom agent
   fastify.post('/api/agents', async (request, reply) => {
+    const user = await request.requireUser();
     const body = request.body as Record<string, unknown>;
 
     const { rows: [agent] } = await fastify.pg.query(
@@ -56,7 +69,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
          (id, name, description, icon, agent_type, default_complexity, can_escalate_to,
           system_prompt, rules, skills, allowed_mcp_servers, allowed_tools,
           max_steps, timeout_minutes, triggers, is_built_in, is_active, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, false, true, 'user')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, false, true, $16)
        RETURNING *`,
       [
         `custom:${Date.now()}`,
@@ -74,6 +87,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
         body['maxSteps'] ?? 20,
         body['timeoutMinutes'] ?? 10,
         JSON.stringify(body['triggers'] ?? {}),
+        user.id,
       ],
     );
 
@@ -82,6 +96,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
 
   // DELETE /api/agents/:id — delete custom agent (built-in protected)
   fastify.delete<{ Params: { id: string } }>('/api/agents/:id', async (request, reply) => {
+    const user = await request.requireUser();
     const { id } = request.params;
 
     if (id.startsWith('built-in:')) {
@@ -89,8 +104,8 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const { rowCount } = await fastify.pg.query(
-      'DELETE FROM agent_definitions WHERE id = $1 AND is_built_in = false',
-      [id],
+      'DELETE FROM agent_definitions WHERE id = $1 AND is_built_in = false AND created_by = $2',
+      [id, user.id],
     );
 
     if (!rowCount) {
@@ -102,6 +117,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
 
   // PATCH /api/agents/:id — update custom agent
   fastify.patch<{ Params: { id: string } }>('/api/agents/:id', async (request, reply) => {
+    const user = await request.requireUser();
     const { id } = request.params;
     const body = request.body as Record<string, unknown>;
 
@@ -121,6 +137,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
            is_active = COALESCE($9, is_active),
            updated_at = NOW()
        WHERE id = $1
+         AND created_by = $10
        RETURNING *`,
       [
         id,
@@ -132,6 +149,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
         body['allowedMcpServers'] ? JSON.stringify(body['allowedMcpServers']) : null,
         body['maxSteps'] ?? null,
         body['isActive'] ?? null,
+        user.id,
       ],
     );
 

@@ -3,11 +3,15 @@ import { z } from 'zod';
 import type { AgentTask, AgentType, TaskComplexity } from '@agent-orchestrator/shared';
 import { env } from '../config/env.js';
 import { QaRunner } from '../services/qa/qa-runner.js';
+import { assertTaskAccess } from '../services/auth/access.js';
 
 export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /api/tasks/:id/approve — approve a destructive task (awaiting_approval → pending/enqueued)
   fastify.post<{ Params: { id: string } }>('/api/tasks/:id/approve', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
+
     const githubToken =
       (request.headers['x-github-token'] as string | undefined) ?? env.GITHUB_TOKEN ?? '';
 
@@ -82,7 +86,9 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
 
   // POST /api/tasks/:id/reject — reject a destructive task (awaiting_approval → cancelled)
   fastify.post<{ Params: { id: string } }>('/api/tasks/:id/reject', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
 
     const { rows: [row] } = await fastify.pg.query<{
       session_id: string; status: string; max_steps: number;
@@ -140,7 +146,10 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
 
   // POST /api/tasks/:id/inject — inject a message into a running agent
   fastify.post<{ Params: { id: string } }>('/api/tasks/:id/inject', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
+
     const { message } = z.object({ message: z.string().min(1).max(4000) }).parse(request.body);
 
     const { rows: [row] } = await fastify.pg.query<{
@@ -177,17 +186,15 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // GET /api/tasks/:id
-  fastify.get<{ Params: { id: string } }>('/api/tasks/:id', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/tasks/:id', async (request) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
 
     const { rows: [task] } = await fastify.pg.query(
       'SELECT * FROM agent_tasks WHERE id = $1',
       [id],
     );
-
-    if (!task) {
-      return reply.status(404).send({ error: 'Task not found' });
-    }
 
     return task;
   });
@@ -196,20 +203,20 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
   // populated by the post-task hook in agent-worker. Returns empty array when
   // QA hasn't run yet (e.g. task still in flight or non-code agent).
   const qaRunner = new QaRunner(fastify.pg.pool, fastify.log);
-  fastify.get<{ Params: { id: string } }>('/api/tasks/:id/qa', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/tasks/:id/qa', async (request) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
-    const { rows: [task] } = await fastify.pg.query(
-      'SELECT id FROM agent_tasks WHERE id = $1',
-      [id],
-    );
-    if (!task) return reply.status(404).send({ error: 'Task not found' });
+    await assertTaskAccess(fastify, id, orgId);
     const results = await qaRunner.getResultsForTask(id);
     return { results };
   });
 
   // POST /api/tasks/:id/pause
   fastify.post<{ Params: { id: string } }>('/api/tasks/:id/pause', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
+
     const paused = await fastify.taskQueue.pauseTask(id);
 
     if (!paused) {
@@ -221,7 +228,10 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
 
   // POST /api/tasks/:id/resume
   fastify.post<{ Params: { id: string } }>('/api/tasks/:id/resume', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
+
     const resumed = fastify.processManager.resumeAgent(id);
 
     if (!resumed) {
@@ -238,7 +248,10 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
 
   // POST /api/tasks/:id/stop
   fastify.post<{ Params: { id: string } }>('/api/tasks/:id/stop', async (request, reply) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
+
     const stopped = await fastify.taskQueue.stopTask(id);
 
     if (!stopped) {
@@ -249,8 +262,10 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // GET /api/tasks/:id/cost
-  fastify.get<{ Params: { id: string } }>('/api/tasks/:id/cost', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>('/api/tasks/:id/cost', async (request) => {
+    const { orgId } = await request.requireOrg();
     const { id } = request.params;
+    await assertTaskAccess(fastify, id, orgId);
 
     const { rows: [task] } = await fastify.pg.query<{
       cost_usd: string;
@@ -261,10 +276,6 @@ export async function taskRoutes(fastify: FastifyInstance): Promise<void> {
       'SELECT cost_usd, input_tokens, output_tokens, model FROM agent_tasks WHERE id = $1',
       [id],
     );
-
-    if (!task) {
-      return reply.status(404).send({ error: 'Task not found' });
-    }
 
     const live = fastify.costTracker.getTaskDetails(id);
 

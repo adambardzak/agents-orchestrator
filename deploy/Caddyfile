@@ -5,7 +5,10 @@
 #   :8091                       → same routes (legacy plain-HTTP fallback during migration)
 #   :8092                       → code-server (own login, served directly by code-server container)
 #
-# All public routes are protected by IP allowlist (defense-in-depth) + HTTP basic auth.
+# Auth: Better Auth (sign-in / sign-up / session) is the primary gate at the
+# application layer. The previous Caddy basic_auth wrapper has been removed
+# now that real auth is in place. Optional IP allowlist is still supported
+# via $ALLOWED_IPS for emergency lock-down (defaults to 0.0.0.0/0 = open).
 
 {
 	admin off
@@ -15,16 +18,11 @@
 
 # ─── Snippets reused by both site blocks ─────────────────────────────────────
 (app_routes) {
-	# IP allowlist (in front of basic auth).
-	# Comma-separated CIDR list in $ALLOWED_IPS; default 0.0.0.0/0 = allow all.
+	# Optional IP allowlist (defense-in-depth). Default 0.0.0.0/0 = allow all.
 	@blocked not client_ip {$ALLOWED_IPS:0.0.0.0/0}
 
 	route {
 		abort @blocked
-
-		basic_auth {
-			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-		}
 
 		# Nuxt UI's icon server lives under /api/_nuxt_icon/* on the web app,
 		# so it must be matched BEFORE the generic /api/* → fastify rule.
@@ -68,3 +66,4 @@ agents.appitect.eu {
 :8091 {
 	import app_routes
 }
+

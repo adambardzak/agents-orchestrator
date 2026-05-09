@@ -1,24 +1,27 @@
 # Caddy reverse proxy for agent-orchestrator (Netcup VPS)
-# Public on :8091 with HTTP basic auth wrapping the Nuxt UI + API.
-# code-server keeps its own login on :8092 (no Caddy in front).
+#
+# Public surfaces:
+#   https://agents.appitect.eu  → web (Nuxt) + /api/* + /ws/* proxied to api  (LE TLS, auto)
+#   :8091                       → same routes (legacy plain-HTTP fallback during migration)
+#   :8092                       → code-server (own login, served directly by code-server container)
+#
+# All public routes are protected by IP allowlist (defense-in-depth) + HTTP basic auth.
 
 {
-	# Global options
-	auto_https off
 	admin off
+	# auto_https is enabled by default; site blocks with hostnames will get LE certs.
+	email adam.bardzak@gmail.com
 }
 
-:8091 {
-	# IP allowlist (defense-in-depth, in front of basic auth).
-	# Comma-separated list of CIDRs in $ALLOWED_IPS, e.g. "1.2.3.4/32,5.6.0.0/16".
-	# Default 0.0.0.0/0 = allow all (basic auth still required).
+# ─── Snippets reused by both site blocks ─────────────────────────────────────
+(app_routes) {
+	# IP allowlist (in front of basic auth).
+	# Comma-separated CIDR list in $ALLOWED_IPS; default 0.0.0.0/0 = allow all.
 	@blocked not client_ip {$ALLOWED_IPS:0.0.0.0/0}
 
-	# `route` enforces explicit ordering; abort runs FIRST, before basic_auth/handle.
 	route {
 		abort @blocked
 
-		# All paths require basic auth.
 		basic_auth {
 			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 		}
@@ -51,4 +54,17 @@
 		output stdout
 		format console
 	}
+}
+
+# ─── Production HTTPS (Let's Encrypt) ────────────────────────────────────────
+agents.appitect.eu {
+	import app_routes
+}
+
+# ─── Legacy plain-HTTP fallback on :8091 ─────────────────────────────────────
+# Kept temporarily so existing :8091 bookmarks / CI smoke checks continue to
+# work during the HTTPS migration. Remove once everything points at the
+# canonical hostname.
+:8091 {
+	import app_routes
 }

@@ -114,6 +114,9 @@ services:
     container_name: orchestrator-caddy
     restart: unless-stopped
     ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:443:443/udp"
       - "0.0.0.0:8091:8091"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

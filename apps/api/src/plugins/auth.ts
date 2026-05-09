@@ -163,6 +163,32 @@ async function authPluginImpl(fastify: FastifyInstance): Promise<void> {
     });
   }
 
+  // 1c) Lightweight session check used by Caddy `forward_auth` (e.g. to
+  //     gate the embedded code-server). Returns 200 if a real Better Auth
+  //     session exists OR if REQUIRE_AUTH is disabled (dev bootstrap mode);
+  //     returns 302 → /auth/login otherwise so the browser is sent to sign in
+  //     and lands back on the originally-requested URL afterwards.
+  //     Distinct from /api/auth/get-session, which intentionally returns
+  //     200 + null body for unauthenticated callers (and therefore can't be
+  //     used as a forward_auth gate on its own).
+  fastify.get('/api/auth/check', async (request, reply) => {
+    if (!env.REQUIRE_AUTH) return reply.code(200).send({ ok: true });
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(request.headers)) {
+      if (typeof v === 'string') headers.set(k, v);
+    }
+    const result = await auth.api.getSession({ headers });
+    if (result?.user) {
+      reply.header('X-Forwarded-User', result.user.id);
+      return reply.code(200).send({ ok: true, userId: result.user.id });
+    }
+    // Caddy forward_auth forwards X-Forwarded-Uri so we can build a redirect
+    // back to wherever the user was trying to go.
+    const originalUri = (request.headers['x-forwarded-uri'] as string | undefined) ?? '/';
+    const redirectTarget = `/auth/login?redirect=${encodeURIComponent(originalUri)}`;
+    return reply.code(302).header('Location', redirectTarget).send();
+  });
+
   fastify.all('/api/auth/*', async (request, reply) => {
     const url = new URL(request.url, env.APP_URL);
     const headers = new Headers();

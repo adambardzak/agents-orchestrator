@@ -1,14 +1,16 @@
 # Caddy reverse proxy for agent-orchestrator (Netcup VPS)
 #
 # Public surfaces:
-#   https://agents.appitect.eu  → web (Nuxt) + /api/* + /ws/* proxied to api  (LE TLS, auto)
-#   :8091                       → same routes (legacy plain-HTTP fallback during migration)
-#   :8092                       → code-server (own login, served directly by code-server container)
+#   https://agents.appitect.eu        → web (Nuxt) + /api/* + /ws/* proxied to api  (LE TLS, auto)
+#   https://agents.appitect.eu/code/* → code-server, gated by Better Auth via forward_auth
+#   :8091                              → legacy plain-HTTP fallback (web + api), basic_auth removed
+#   (code-server is no longer exposed directly on :8092 — it lives only inside the docker network)
 #
-# Auth: Better Auth (sign-in / sign-up / session) is the primary gate at the
-# application layer. The previous Caddy basic_auth wrapper has been removed
-# now that real auth is in place. Optional IP allowlist is still supported
-# via $ALLOWED_IPS for emergency lock-down (defaults to 0.0.0.0/0 = open).
+# Auth: Better Auth (sign-in / sign-up / session) is the primary gate. The
+# previous Caddy basic_auth wrapper has been removed. /code/* is protected by
+# `forward_auth` against /api/auth/check, so only signed-in users can reach
+# the embedded code-server (which itself runs with --auth none internally).
+# Optional IP allowlist via $ALLOWED_IPS for emergency lock-down.
 
 {
 	admin off
@@ -23,6 +25,29 @@
 
 	route {
 		abort @blocked
+
+		# ─── code-server (gated by Better Auth via forward_auth) ────────────
+		# /code/* is only proxied to code-server if the caller has a valid
+		# Better Auth session. The auth check happens against the API's
+		# /api/auth/check endpoint (returns 401 when no session, 200 when ok).
+		# On 401, we redirect the browser to the Nuxt login page with a
+		# `redirect` query so they come back here after sign-in.
+		@codeUnauth {
+			path /code/*
+		}
+		handle @codeUnauth {
+			forward_auth api:3001 {
+				uri /api/auth/check
+				# code-server needs websockets; copy nothing back to the request
+				copy_headers X-Forwarded-User
+			}
+			# Strip /code prefix before proxying so code-server sees root paths.
+			uri strip_prefix /code
+			reverse_proxy code-server:8080 {
+				header_up Host {host}
+				header_up X-Forwarded-Proto {scheme}
+			}
+		}
 
 		# Nuxt UI's icon server lives under /api/_nuxt_icon/* on the web app,
 		# so it must be matched BEFORE the generic /api/* → fastify rule.
@@ -66,4 +91,3 @@ agents.appitect.eu {
 :8091 {
 	import app_routes
 }
-

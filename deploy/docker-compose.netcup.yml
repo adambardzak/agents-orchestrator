@@ -71,24 +71,26 @@ services:
     ports:
       - "127.0.0.1:33010:3000"
     environment:
-      NODE_ENV:             production
-      PORT:                 3000
-      HOST:                 0.0.0.0
-      NUXT_PUBLIC_API_BASE: ${PUBLIC_API_BASE}
-      NUXT_PUBLIC_WS_BASE:  ${PUBLIC_WS_BASE}
+      NODE_ENV:                 production
+      PORT:                     3000
+      HOST:                     0.0.0.0
+      NUXT_PUBLIC_API_BASE:     ${PUBLIC_API_BASE}
+      NUXT_PUBLIC_WS_BASE:      ${PUBLIC_WS_BASE}
+      NUXT_PUBLIC_CODE_SERVER_URL: ${CODE_SERVER_URL}
     depends_on: [api]
     networks: [orchestrator-net]
 
   # ─── code-server ─────────────────────────────────────────────────
+  # Runs WITHOUT its own auth — access is gated at the Caddy layer via
+  # forward_auth against /api/auth/check (Better Auth session). The container
+  # is reachable only inside the docker network; no host port is published.
+  # CODE_SERVER_PASSWORD is therefore unused but kept for backward compat.
   code-server:
     image: codercom/code-server:4.96.4
     container_name: orchestrator-code-server
     restart: unless-stopped
     user: "0:0"
-    ports:
-      - "0.0.0.0:8092:8080"
     environment:
-      PASSWORD: ${CODE_SERVER_PASSWORD}
       DOCKER_USER: root
     volumes:
       - workspaces:/home/coder/workspaces
@@ -96,7 +98,7 @@ services:
       - code_server_config:/home/coder/.config
     command: >
       --bind-addr 0.0.0.0:8080
-      --auth password
+      --auth none
       --disable-telemetry
       --disable-update-check
       /home/coder/workspaces

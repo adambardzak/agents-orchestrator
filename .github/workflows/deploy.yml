@@ -106,6 +106,10 @@ jobs:
           echo "▶ Bringing stack up (api runs its own migrations on boot)"
           docker compose -f docker-compose.netcup.yml --env-file ../.env up -d
 
+          echo "▶ Reloading Caddy (picks up Caddyfile changes without dropping certs)"
+          docker exec orchestrator-caddy caddy reload --config /etc/caddy/Caddyfile || \
+            docker compose -f docker-compose.netcup.yml --env-file ../.env up -d --force-recreate caddy
+
           echo "▶ Pruning old images"
           docker image prune -f --filter "until=72h"
 

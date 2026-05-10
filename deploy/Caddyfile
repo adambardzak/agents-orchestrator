@@ -30,22 +30,22 @@
 		# /code/* is only proxied to code-server if the caller has a valid
 		# Better Auth session. The auth check happens against the API's
 		# /api/auth/check endpoint (returns 401 when no session, 200 when ok).
-		# On 401, we redirect the browser to the Nuxt login page with a
-		# `redirect` query so they come back here after sign-in.
-		@codeUnauth {
-			path /code/*
-		}
-		handle @codeUnauth {
+		# On 401, the API responds with a 302 to /auth/login so the browser
+		# is redirected automatically.
+		#
+		# IMPORTANT: We do NOT strip the /code prefix. Code-server detects
+		# the sub-path from the request URL and generates correct absolute
+		# URLs for its assets and websocket. Stripping the prefix would
+		# break the editor (assets 404 → "Disconnected").
+		handle /code/* {
 			forward_auth api:3001 {
 				uri /api/auth/check
-				# code-server needs websockets; copy nothing back to the request
 				copy_headers X-Forwarded-User
 			}
-			# Strip /code prefix before proxying so code-server sees root paths.
-			uri strip_prefix /code
 			reverse_proxy code-server:8080 {
 				header_up Host {host}
 				header_up X-Forwarded-Proto {scheme}
+				header_up X-Forwarded-Host {host}
 			}
 		}
 

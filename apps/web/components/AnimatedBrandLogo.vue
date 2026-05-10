@@ -23,15 +23,87 @@
     role="img"
     :class="['brand-mark', { 'is-active': mode === 'active', 'is-pulse': mode === 'pulse' }]"
   >
+    <!--
+      Mask used by the draw mode. The mask starts as a tiny invisible
+      circle at logo center (so the filled path is invisible) and grows
+      to fully cover the artboard as the stroke completes. Effect: the
+      stroke paints the outline while the fill bleeds outward from the
+      center, "filling in" the shape behind the pen.
+    -->
+    <defs>
+      <mask :id="maskId" maskUnits="userSpaceOnUse">
+        <rect width="680" height="680" fill="black" />
+        <circle
+          ref="maskCircleEl"
+          cx="340"
+          cy="340"
+          :r="mode === 'draw' ? 0 : 700"
+          fill="white"
+        />
+      </mask>
+    </defs>
+
+    <!--
+      Filled copy of the path. Always rendered with `currentColor`, but
+      hidden by the mask in draw mode until the radial reveal grows.
+      For non-draw modes the mask is fully open so this is just the
+      static logo.
+    -->
+    <g transform="translate(0,680) scale(0.033333,-0.033333)" :mask="`url(#${maskId})`">
+      <path
+        ref="fillPathEl"
+        fill="currentColor"
+        stroke="none"
+        :d="logoPath"
+      />
+    </g>
+
+    <!--
+      Stroke copy of the path drawn on top. In draw mode this is what
+      the user sees being "painted" before the fill bleeds in. In other
+      modes it's invisible (stroke-width 0).
+    -->
     <g transform="translate(0,680) scale(0.033333,-0.033333)">
       <path
-        ref="pathEl"
-        :fill="mode === 'static' ? 'currentColor' : 'transparent'"
+        ref="strokePathEl"
+        fill="none"
         stroke="currentColor"
-        :stroke-width="mode === 'static' ? 0 : 120"
+        :stroke-width="mode === 'draw' ? 80 : 0"
         stroke-linecap="round"
         stroke-linejoin="round"
-        d="M13593 18520 c-995 -97 -1816 -801 -2052 -1760 -102 -415 -93 -801
+        :d="logoPath"
+      />
+    </g>
+  </svg>
+</template>
+
+<script setup lang="ts">
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import gsap from 'gsap';
+
+interface Props {
+  mode?: 'draw' | 'pulse' | 'active' | 'static';
+  /** Total draw timeline duration (sec). */
+  drawDuration?: number;
+  /** Delay before draw starts (sec). */
+  drawDelay?: number;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  mode: 'static',
+  drawDuration: 1.6,
+  drawDelay: 0,
+});
+
+const emit = defineEmits<{ (e: 'draw-complete'): void }>();
+
+// Unique mask id per instance — multiple <AnimatedBrandLogo> on the same
+// page must not share masks or one will steal the other's reveal state.
+const maskId = `brand-mask-${Math.random().toString(36).slice(2, 9)}`;
+
+// Verbatim copy of the logo glyph path; kept as a const string so both
+// the stroke and fill copies stay perfectly in sync.
+const logoPath = `M13593 18520 c-995 -97 -1816 -801 -2052 -1760 -102 -415 -93 -801
 29 -1320 159 -676 155 -649 154 -925 0 -188 -3 -235 -22 -321 -67 -309 -206
 -569 -416 -780 -166 -166 -331 -266 -565 -344 -160 -53 -300 -83 -667 -140
 -173 -28 -419 -68 -547 -90 -354 -60 -493 -73 -692 -67 -247 8 -407 47 -608
@@ -56,35 +128,12 @@
 -217 445 -281 618 -311 845 -15 117 -6 334 20 445 65 284 194 514 405 726 226
 226 398 320 971 534 392 147 634 270 857 437 229 172 402 355 557 589 192 289
 313 606 367 964 25 160 24 481 0 645 -100 669 -464 1244 -1022 1614 -287 191
--613 316 -954 366 -130 19 -414 27 -537 15z"
-      />
-    </g>
-  </svg>
-</template>
-
-<script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
-import gsap from 'gsap';
-
-interface Props {
-  mode?: 'draw' | 'pulse' | 'active' | 'static';
-  /** Draw duration (sec). Only for mode="draw". */
-  drawDuration?: number;
-  /** Delay before draw starts (sec). */
-  drawDelay?: number;
-  /** Emitted when draw completes. Useful for splash → fade-out chains. */
-}
-
-const props = withDefaults(defineProps<Props>(), {
-  mode: 'static',
-  drawDuration: 1.6,
-  drawDelay: 0,
-});
-
-const emit = defineEmits<{ (e: 'draw-complete'): void }>();
+-613 316 -954 366 -130 19 -414 27 -537 15z`;
 
 const svgEl = ref<SVGSVGElement | null>(null);
-const pathEl = ref<SVGPathElement | null>(null);
+const fillPathEl = ref<SVGPathElement | null>(null);
+const strokePathEl = ref<SVGPathElement | null>(null);
+const maskCircleEl = ref<SVGCircleElement | null>(null);
 
 let activeTl: gsap.core.Timeline | null = null;
 
@@ -96,17 +145,21 @@ function killTimeline() {
 }
 
 function runDraw() {
-  if (!pathEl.value) return;
-  const path = pathEl.value;
-  const len = path.getTotalLength();
+  const stroke = strokePathEl.value;
+  const fill = fillPathEl.value;
+  const mask = maskCircleEl.value;
+  if (!stroke || !fill || !mask) return;
 
-  // Prep: hide stroke by offsetting it fully, transparent fill.
-  gsap.set(path, {
+  const len = stroke.getTotalLength();
+
+  // Initial state: stroke fully hidden, mask collapsed (so fill is invisible).
+  gsap.set(stroke, {
     strokeDasharray: len,
     strokeDashoffset: len,
-    fill: 'transparent',
     strokeOpacity: 1,
   });
+  gsap.set(mask, { attr: { r: 0 } });
+  gsap.set(fill, { opacity: 1 });
 
   killTimeline();
   activeTl = gsap.timeline({
@@ -114,37 +167,41 @@ function runDraw() {
     onComplete: () => emit('draw-complete'),
   });
 
-  // 1. Stroke draws in
-  activeTl.to(path, {
-    strokeDashoffset: 0,
-    duration: props.drawDuration,
-    ease: 'power2.inOut',
-  });
-
-  // 2. Fill fades in while stroke fades out (≈ stroke "thickens" into shape)
-  activeTl.to(
-    path,
-    {
-      fill: 'currentColor',
+  // Stroke draws over the full duration. Fill reveal trails ~25% behind
+  // the stroke tip (delay = 0.25 * duration) so the eye sees the pen
+  // painting first, then the color "bleeding" outward from center to
+  // catch up. The mask radius covers the whole 680×680 artboard at the
+  // end (sqrt(2)*340 ≈ 481, plus headroom).
+  activeTl
+    .to(stroke, {
+      strokeDashoffset: 0,
+      duration: props.drawDuration,
+      ease: 'power2.inOut',
+    }, 0)
+    .to(mask, {
+      attr: { r: 520 },
+      duration: props.drawDuration * 0.85,
+      ease: 'power2.out',
+    }, props.drawDuration * 0.18)
+    // Fade the stroke out as the fill takes over so we don't end on
+    // a thicker silhouette than the static logo.
+    .to(stroke, {
       strokeOpacity: 0,
-      duration: 0.45,
+      duration: 0.35,
       ease: 'power1.out',
-    },
-    '-=0.15',
-  );
+    }, props.drawDuration - 0.05);
 }
 
 function runPulse(active: boolean) {
-  if (!pathEl.value || !svgEl.value) return;
-  const path = pathEl.value;
+  const fill = fillPathEl.value;
+  const stroke = strokePathEl.value;
+  const mask = maskCircleEl.value;
+  if (!fill || !stroke || !mask || !svgEl.value) return;
 
-  // Make sure logo is fully drawn — pulse rides on top of the static look.
-  gsap.set(path, {
-    strokeDasharray: 'none',
-    strokeDashoffset: 0,
-    fill: 'currentColor',
-    strokeOpacity: 0,
-  });
+  // Force the logo to its fully revealed look before pulsing.
+  gsap.set(stroke, { strokeDasharray: 'none', strokeDashoffset: 0, strokeOpacity: 0 });
+  gsap.set(mask, { attr: { r: 700 } });
+  gsap.set(fill, { opacity: 1 });
 
   killTimeline();
   activeTl = gsap.timeline({ repeat: -1, yoyo: true });
@@ -161,14 +218,15 @@ function runPulse(active: boolean) {
 }
 
 function runStatic() {
-  if (!pathEl.value || !svgEl.value) return;
+  const fill = fillPathEl.value;
+  const stroke = strokePathEl.value;
+  const mask = maskCircleEl.value;
+  if (!fill || !stroke || !mask || !svgEl.value) return;
+
   killTimeline();
-  gsap.set(pathEl.value, {
-    strokeDasharray: 'none',
-    strokeDashoffset: 0,
-    fill: 'currentColor',
-    strokeOpacity: 0,
-  });
+  gsap.set(stroke, { strokeDasharray: 'none', strokeDashoffset: 0, strokeOpacity: 0 });
+  gsap.set(mask, { attr: { r: 700 } });
+  gsap.set(fill, { opacity: 1 });
   gsap.set(svgEl.value, { scale: 1, opacity: 1, filter: 'none' });
 }
 
@@ -190,7 +248,6 @@ function applyMode() {
 }
 
 onMounted(() => {
-  // Respect users who asked for no motion at the OS level.
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     runStatic();
     if (props.mode === 'draw') emit('draw-complete');
@@ -207,8 +264,6 @@ onBeforeUnmount(killTimeline);
 <style scoped>
 .brand-mark {
   display: block;
-  /* Allow scale transforms to render outside the bounding box without being
-     clipped (drop-shadow filter especially). */
   overflow: visible;
 }
 </style>

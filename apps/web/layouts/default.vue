@@ -8,11 +8,7 @@
     >
       <!-- Brand -->
       <div class="flex items-center gap-2 px-4 h-12 border-b border-border">
-        <div
-          class="w-6 h-6 rounded-md bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0"
-        >
-          <UIcon name="i-ph-graph-light" class="w-4 h-4 text-white" />
-        </div>
+        <BrandLogo class="w-6 h-6 shrink-0 text-text-primary" />
         <span class="font-heading font-semibold text-sm tracking-tight">Orchestrator</span>
       </div>
 

@@ -5,9 +5,7 @@
 <template>
   <div class="min-h-screen w-screen flex flex-col bg-bg text-text-primary">
     <header class="flex items-center gap-2 px-6 h-14">
-      <div class="w-7 h-7 rounded-md bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
-        <UIcon name="i-ph-graph-light" class="w-4.5 h-4.5 text-white" />
-      </div>
+      <BrandLogo class="w-7 h-7 text-text-primary" />
       <span class="font-heading font-semibold text-[15px] tracking-tight">Orchestrator</span>
     </header>
 

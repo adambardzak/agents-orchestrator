@@ -12,6 +12,15 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/tokens.css'],
 
+  app: {
+    head: {
+      title: 'Orchestrator',
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+      ],
+    },
+  },
+
   colorMode: {
     preference: 'dark',     // dark default
     fallback: 'dark',

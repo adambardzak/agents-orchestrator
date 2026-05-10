@@ -5,7 +5,7 @@
 <template>
   <div class="min-h-screen w-screen flex flex-col bg-bg text-text-primary">
     <header class="flex items-center gap-2 px-6 h-14">
-      <BrandLogo class="w-7 h-7 text-text-primary" />
+      <AnimatedBrandLogo mode="draw" :draw-duration="1.2" class="w-7 h-7 text-text-primary" />
       <span class="font-heading font-semibold text-[15px] tracking-tight">Orchestrator</span>
     </header>
 

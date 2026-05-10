@@ -187,6 +187,9 @@ importers:
       dompurify:
         specifier: ^3.4.2
         version: 3.4.2
+      gsap:
+        specifier: ^3.15.0
+        version: 3.15.0
       lucide-vue-next:
         specifier: ^0.408.0
         version: 0.408.0(vue@3.5.33(typescript@5.9.3))
@@ -4591,6 +4594,9 @@ packages:
 
   graphemer@1.4.0:
     resolution: {integrity: sha512-EtKwoO6kxCL9WO5xipiHTZlSzBm7WLT627TqC/uVRd0HKmq8NXyebnNYxDoBi7wt8eTWrUrKXCOVaFq9x1kgag==}
+
+  gsap@3.15.0:
+    resolution: {integrity: sha512-dMW4CWBTUK1AEEDeZc1g4xpPGIrSf9fJF960qbTZmN/QwZIWY5wgliS6JWl9/25fpTGJrMRtSjGtOmPnfjZB+A==}
 
   gzip-size@7.0.0:
     resolution: {integrity: sha512-O1Ld7Dr+nqPnmGpdhzLmMTQ4vAsD+rHwMm1NLUmoUFFymBOMKxCCrtDxqdBRYXdeEPEi3SyoR4TizJLQrnKBNA==}
@@ -12432,6 +12438,8 @@ snapshots:
   graceful-fs@4.2.11: {}
 
   graphemer@1.4.0: {}
+
+  gsap@3.15.0: {}
 
   gzip-size@7.0.0:
     dependencies:

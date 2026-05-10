@@ -8,7 +8,10 @@
     >
       <!-- Brand -->
       <div class="flex items-center gap-2 px-4 h-12 border-b border-border">
-        <BrandLogo class="w-6 h-6 shrink-0 text-text-primary" />
+        <AnimatedBrandLogo
+          :mode="hasActiveTasks ? 'active' : 'static'"
+          class="w-6 h-6 shrink-0 text-text-primary"
+        />
         <span class="font-heading font-semibold text-sm tracking-tight">Orchestrator</span>
       </div>
 

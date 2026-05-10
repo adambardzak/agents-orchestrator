@@ -24,32 +24,34 @@
     :class="['brand-mark', { 'is-active': mode === 'active', 'is-pulse': mode === 'pulse' }]"
   >
     <!--
-      Mask used by the draw mode. The mask starts as a tiny invisible
-      circle at logo center (so the filled path is invisible) and grows
-      to fully cover the artboard as the stroke completes. Effect: the
-      stroke paints the outline while the fill bleeds outward from the
-      center, "filling in" the shape behind the pen.
+      Mask used ONLY by the draw mode. Conditionally rendered to avoid
+      pulling the filled path through a (possibly mis-hydrated) mask
+      reference in static / pulse / active modes. Draw mode JS sets the
+      circle's `r` to 0 on mount, then animates it outward.
     -->
-    <defs>
+    <defs v-if="mode === 'draw'">
       <mask :id="maskId" maskUnits="userSpaceOnUse">
         <rect width="680" height="680" fill="black" />
         <circle
           ref="maskCircleEl"
           cx="340"
           cy="340"
-          :r="mode === 'draw' ? 0 : 700"
+          r="0"
           fill="white"
         />
       </mask>
     </defs>
 
     <!--
-      Filled copy of the path. Always rendered with `currentColor`, but
-      hidden by the mask in draw mode until the radial reveal grows.
-      For non-draw modes the mask is fully open so this is just the
-      static logo.
+      Filled copy of the path. Always rendered with `currentColor`. Only
+      gets masked in draw mode; in every other mode it's just the plain
+      static logo with no mask attribute (so SSR + hydration are safe
+      regardless of the random `maskId`).
     -->
-    <g transform="translate(0,680) scale(0.033333,-0.033333)" :mask="`url(#${maskId})`">
+    <g
+      transform="translate(0,680) scale(0.033333,-0.033333)"
+      :mask="mode === 'draw' ? `url(#${maskId})` : undefined"
+    >
       <path
         ref="fillPathEl"
         fill="currentColor"
@@ -167,11 +169,6 @@ function runDraw() {
     onComplete: () => emit('draw-complete'),
   });
 
-  // Stroke draws over the full duration. Fill reveal trails ~25% behind
-  // the stroke tip (delay = 0.25 * duration) so the eye sees the pen
-  // painting first, then the color "bleeding" outward from center to
-  // catch up. The mask radius covers the whole 680×680 artboard at the
-  // end (sqrt(2)*340 ≈ 481, plus headroom).
   activeTl
     .to(stroke, {
       strokeDashoffset: 0,
@@ -183,8 +180,6 @@ function runDraw() {
       duration: props.drawDuration * 0.85,
       ease: 'power2.out',
     }, props.drawDuration * 0.18)
-    // Fade the stroke out as the fill takes over so we don't end on
-    // a thicker silhouette than the static logo.
     .to(stroke, {
       strokeOpacity: 0,
       duration: 0.35,
@@ -195,12 +190,11 @@ function runDraw() {
 function runPulse(active: boolean) {
   const fill = fillPathEl.value;
   const stroke = strokePathEl.value;
-  const mask = maskCircleEl.value;
-  if (!fill || !stroke || !mask || !svgEl.value) return;
+  if (!fill || !stroke || !svgEl.value) return;
 
   // Force the logo to its fully revealed look before pulsing.
+  // No mask in pulse mode — fill is unrestricted.
   gsap.set(stroke, { strokeDasharray: 'none', strokeDashoffset: 0, strokeOpacity: 0 });
-  gsap.set(mask, { attr: { r: 700 } });
   gsap.set(fill, { opacity: 1 });
 
   killTimeline();
@@ -220,12 +214,11 @@ function runPulse(active: boolean) {
 function runStatic() {
   const fill = fillPathEl.value;
   const stroke = strokePathEl.value;
-  const mask = maskCircleEl.value;
-  if (!fill || !stroke || !mask || !svgEl.value) return;
+  if (!fill || !stroke || !svgEl.value) return;
 
   killTimeline();
+  // No mask in static mode — fill renders directly.
   gsap.set(stroke, { strokeDasharray: 'none', strokeDashoffset: 0, strokeOpacity: 0 });
-  gsap.set(mask, { attr: { r: 700 } });
   gsap.set(fill, { opacity: 1 });
   gsap.set(svgEl.value, { scale: 1, opacity: 1, filter: 'none' });
 }

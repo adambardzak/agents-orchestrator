@@ -27,21 +27,16 @@
 		abort @blocked
 
 		# ─── code-server (gated by Better Auth via forward_auth) ────────────
-		# /code/* is only proxied to code-server if the caller has a valid
-		# Better Auth session. The auth check happens against the API's
-		# /api/auth/check endpoint (returns 401 when no session, 200 when ok).
-		# On 401, the API responds with a 302 to /auth/login so the browser
-		# is redirected automatically.
-		#
-		# IMPORTANT: We do NOT strip the /code prefix. Code-server detects
-		# the sub-path from the request URL and generates correct absolute
-		# URLs for its assets and websocket. Stripping the prefix would
-		# break the editor (assets 404 → "Disconnected").
+		# Per code-server docs (Caddy section), serve via subpath by stripping
+		# the /code prefix before proxying. Code-server generates relative
+		# URLs that work because the browser is already on /code/.
+		# forward_auth ensures only signed-in users can reach the editor.
 		handle /code/* {
 			forward_auth api:3001 {
 				uri /api/auth/check
 				copy_headers X-Forwarded-User
 			}
+			uri strip_prefix /code
 			reverse_proxy code-server:8080 {
 				header_up Host {host}
 				header_up X-Forwarded-Proto {scheme}

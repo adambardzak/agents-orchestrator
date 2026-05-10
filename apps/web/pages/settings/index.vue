@@ -92,7 +92,7 @@ const apiHealthy = ref(false);
 onMounted(async () => {
   // Check API health
   try {
-    const r = await fetch(`${apiBase}/health`);
+    const r = await fetch(`${apiBase}/api/health`);
     apiHealthy.value = r.ok;
   } catch { apiHealthy.value = false; }
 

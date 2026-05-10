@@ -27,6 +27,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'inspect', task: AgentTask): void;
   (e: 'inject',  task: AgentTask): void;
+  (e: 'stop',    task: AgentTask): void;
 }>();
 
 // ── Style helpers ─────────────────────────────────────────────────────────
@@ -650,6 +651,14 @@ function resetView() {
               >
                 <UIcon name="i-ph-syringe-light" class="w-3 h-3 text-accent" />
               </button>
+              <button
+                v-if="child.status === 'running' || child.status === 'pending' || child.status === 'paused'"
+                class="absolute -top-2 -right-8 opacity-0 group-hover:opacity-100 bg-failed/30 hover:bg-failed/50 rounded-full p-1 transition"
+                title="Stop task"
+                @click.stop="emit('stop', child)"
+              >
+                <UIcon name="i-ph-stop-light" class="w-3 h-3 text-failed" />
+              </button>
             </div>
 
             <!-- Sub-tree if planner with ticket children -->
@@ -696,6 +705,14 @@ function resetView() {
                     @click.stop="emit('inject', t)"
                   >
                     <UIcon name="i-ph-syringe-light" class="w-2.5 h-2.5 text-accent" />
+                  </button>
+                  <button
+                    v-if="t.status === 'running' || t.status === 'pending' || t.status === 'paused'"
+                    class="absolute -top-1.5 -right-7 opacity-0 group-hover:opacity-100 bg-failed/30 hover:bg-failed/50 rounded-full p-0.5 transition"
+                    title="Stop task"
+                    @click.stop="emit('stop', t)"
+                  >
+                    <UIcon name="i-ph-stop-light" class="w-2.5 h-2.5 text-failed" />
                   </button>
                 </div>
               </div>

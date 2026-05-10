@@ -185,6 +185,7 @@
               :events-by-task="taskEventsMap"
               @inspect="onInspectTask"
               @inject="openInject"
+              @stop="onStopTask"
             />
           </div>
         </div>
@@ -629,6 +630,21 @@ function openInject(task: AgentTask) {
 
 function onInspectTask(task: AgentTask) {
   inspectedTaskId.value = task.id;
+}
+
+async function onStopTask(task: AgentTask) {
+  const ok = window.confirm(
+    `Stop ${task.agentType} task?\n\nThis cancels the running agent immediately. The task will be marked as cancelled and any in-flight work will be lost.`,
+  );
+  if (!ok) return;
+  try {
+    await apiStore.stopTask(task.id);
+    // Optimistically reflect cancellation; SSE/poll will reconcile soon.
+    const fresh = selectedTasks.value.find((t) => t.id === task.id);
+    if (fresh) fresh.status = 'cancelled';
+  } catch (e) {
+    window.alert(`Failed to stop task: ${(e as Error).message}`);
+  }
 }
 
 async function sendInject() {

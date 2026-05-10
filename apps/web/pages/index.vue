@@ -522,6 +522,17 @@
             >
               Inject
             </UButton>
+            <UButton
+              v-if="sessionStore.runningTasks.length > 0"
+              icon="i-ph-stop-light"
+              color="red"
+              variant="outline"
+              size="sm"
+              :loading="stoppingTask"
+              @click="stopRunningTask"
+            >
+              Stop
+            </UButton>
             <USelect
               :model-value="selectedProjectId"
               :options="projectOptions"
@@ -884,6 +895,29 @@ function openInjectModal() {
   injectMessage.value = '';
   injectResult.value = null;
   showInjectModal.value = true;
+}
+
+// ── Kill running task ────────────────────────────────────────────────────────
+const stoppingTask = ref(false);
+
+async function stopRunningTask() {
+  const target = sessionStore.runningTasks[0];
+  if (!target) return;
+  const ok = window.confirm(
+    `Stop the running ${target.agentType} task?\n\nThis cancels the agent immediately. In-flight work is lost. Files already committed remain.`,
+  );
+  if (!ok) return;
+  stoppingTask.value = true;
+  try {
+    await apiStore.stopTask(target.id);
+    // Optimistic update; the SSE stream / poll will reconcile.
+    const t = sessionStore.tasks.find((x) => x.id === target.id);
+    if (t) t.status = 'cancelled';
+  } catch (e) {
+    window.alert(`Failed to stop task: ${(e as Error).message}`);
+  } finally {
+    stoppingTask.value = false;
+  }
 }
 
 async function doInject() {

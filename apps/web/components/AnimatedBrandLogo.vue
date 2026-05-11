@@ -24,34 +24,15 @@
     :class="['brand-mark', { 'is-active': mode === 'active', 'is-pulse': mode === 'pulse' }]"
   >
     <!--
-      Mask used ONLY by the draw mode. Conditionally rendered to avoid
-      pulling the filled path through a (possibly mis-hydrated) mask
-      reference in static / pulse / active modes. Draw mode JS sets the
-      circle's `r` to 0 on mount, then animates it outward.
+      Filled copy of the path. Always rendered with `currentColor`.
+      In draw mode its opacity is animated from 0 → 1 as the stroke
+      finishes drawing; in every other mode it shows immediately.
+      No mask is involved — earlier revisions tried a radial-mask reveal
+      but the mask coord system fought the path's translate/scale
+      transform and could leave the logo invisible if the timeline was
+      interrupted by a re-render. Plain opacity cross-fade is robust.
     -->
-    <defs v-if="mode === 'draw'">
-      <mask :id="maskId" maskUnits="userSpaceOnUse">
-        <rect width="680" height="680" fill="black" />
-        <circle
-          ref="maskCircleEl"
-          cx="340"
-          cy="340"
-          r="0"
-          fill="white"
-        />
-      </mask>
-    </defs>
-
-    <!--
-      Filled copy of the path. Always rendered with `currentColor`. Only
-      gets masked in draw mode; in every other mode it's just the plain
-      static logo with no mask attribute (so SSR + hydration are safe
-      regardless of the random `maskId`).
-    -->
-    <g
-      transform="translate(0,680) scale(0.033333,-0.033333)"
-      :mask="mode === 'draw' ? `url(#${maskId})` : undefined"
-    >
+    <g transform="translate(0,680) scale(0.033333,-0.033333)">
       <path
         ref="fillPathEl"
         fill="currentColor"
@@ -62,15 +43,15 @@
 
     <!--
       Stroke copy of the path drawn on top. In draw mode this is what
-      the user sees being "painted" before the fill bleeds in. In other
-      modes it's invisible (stroke-width 0).
+      the user sees being "painted" before the fill cross-fades in.
+      In other modes it's invisible (stroke-width 0).
     -->
     <g transform="translate(0,680) scale(0.033333,-0.033333)">
       <path
         ref="strokePathEl"
         fill="none"
         stroke="currentColor"
-        :stroke-width="mode === 'draw' ? 80 : 0"
+        :stroke-width="mode === 'draw' ? 140 : 0"
         stroke-linecap="round"
         stroke-linejoin="round"
         :d="logoPath"
@@ -98,10 +79,6 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const emit = defineEmits<{ (e: 'draw-complete'): void }>();
-
-// Unique mask id per instance — multiple <AnimatedBrandLogo> on the same
-// page must not share masks or one will steal the other's reveal state.
-const maskId = `brand-mask-${Math.random().toString(36).slice(2, 9)}`;
 
 // Verbatim copy of the logo glyph path; kept as a const string so both
 // the stroke and fill copies stay perfectly in sync.
@@ -135,7 +112,6 @@ const logoPath = `M13593 18520 c-995 -97 -1816 -801 -2052 -1760 -102 -415 -93 -8
 const svgEl = ref<SVGSVGElement | null>(null);
 const fillPathEl = ref<SVGPathElement | null>(null);
 const strokePathEl = ref<SVGPathElement | null>(null);
-const maskCircleEl = ref<SVGCircleElement | null>(null);
 
 let activeTl: gsap.core.Timeline | null = null;
 
@@ -149,42 +125,54 @@ function killTimeline() {
 function runDraw() {
   const stroke = strokePathEl.value;
   const fill = fillPathEl.value;
-  const mask = maskCircleEl.value;
-  if (!stroke || !fill || !mask) return;
+  if (!stroke || !fill) return;
 
   const len = stroke.getTotalLength();
 
-  // Initial state: stroke fully hidden, mask collapsed (so fill is invisible).
+  // Initial: stroke fully hidden along its length, fill invisible.
   gsap.set(stroke, {
     strokeDasharray: len,
     strokeDashoffset: len,
     strokeOpacity: 1,
   });
-  gsap.set(mask, { attr: { r: 0 } });
-  gsap.set(fill, { opacity: 1 });
+  gsap.set(fill, { opacity: 0 });
 
   killTimeline();
   activeTl = gsap.timeline({
     delay: props.drawDelay,
-    onComplete: () => emit('draw-complete'),
+    onComplete: () => {
+      // Hard-force the final visible state so the logo can never end up
+      // invisible — even if the timeline is interrupted by HMR or a
+      // mode change at the wrong moment.
+      gsap.set(fill, { opacity: 1 });
+      gsap.set(stroke, { strokeOpacity: 0 });
+      emit('draw-complete');
+    },
   });
 
-  activeTl
-    .to(stroke, {
-      strokeDashoffset: 0,
-      duration: props.drawDuration,
-      ease: 'power2.inOut',
-    }, 0)
-    .to(mask, {
-      attr: { r: 520 },
-      duration: props.drawDuration * 0.85,
-      ease: 'power2.out',
-    }, props.drawDuration * 0.18)
-    .to(stroke, {
-      strokeOpacity: 0,
-      duration: 0.35,
-      ease: 'power1.out',
-    }, props.drawDuration - 0.05);
+  // 1) Trace the stroke around the path.
+  activeTl.to(stroke, {
+    strokeDashoffset: 0,
+    duration: props.drawDuration,
+    ease: 'power2.inOut',
+  }, 0);
+
+  // 2) Cross-fade the filled glyph in once the trace is ~60% done — it
+  //    feels like the outline is "filling itself in" without the
+  //    radial-mask coordinate-system fragility of the previous revision.
+  activeTl.to(fill, {
+    opacity: 1,
+    duration: props.drawDuration * 0.5,
+    ease: 'power1.out',
+  }, props.drawDuration * 0.55);
+
+  // 3) Fade the stroke out as the fill takes over so the final frame is
+  //    just the clean filled logo with no double-stroke artefact.
+  activeTl.to(stroke, {
+    strokeOpacity: 0,
+    duration: 0.35,
+    ease: 'power1.out',
+  }, props.drawDuration - 0.05);
 }
 
 function runPulse(active: boolean) {

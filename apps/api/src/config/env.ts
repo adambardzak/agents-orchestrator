@@ -70,8 +70,11 @@ const envSchema = z.object({
    * to gitlab.com / github.com from the same orchestrator instance. Re-deploy
    * with different envs if you need both.
    */
-  GITHUB_API_BASE: z.string().url().optional(),
-  GITLAB_API_BASE: z.string().url().optional(),
+  // Empty string from docker-compose `${VAR:-}` mapping must be treated as
+  // unset, otherwise Zod's `.url()` rejects "" and the whole API refuses to
+  // boot when the var is mapped but the host .env leaves it blank.
+  GITHUB_API_BASE: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  GITLAB_API_BASE: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
 
   // ── Context optimization knobs ──────────────────────────────────────────
   /**

@@ -1,5 +1,6 @@
 <template>
   <div class="p-6 max-w-4xl">
+    <SettingsTabs />
     <div class="mb-8">
       <h1 class="text-display-md font-heading font-bold mb-2">Workspace</h1>
       <p class="text-text-secondary">

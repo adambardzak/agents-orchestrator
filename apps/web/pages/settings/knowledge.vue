@@ -1,5 +1,6 @@
 <template>
   <div class="p-6 max-w-7xl">
+    <SettingsTabs />
     <div class="flex items-start justify-between gap-3 mb-2 flex-wrap">
       <div class="min-w-0">
         <div class="flex items-center gap-2 mb-2 flex-wrap">

@@ -1,5 +1,6 @@
 <template>
   <div class="p-6 max-w-6xl">
+    <SettingsTabs />
     <div class="flex items-start justify-between mb-2 gap-4">
       <div>
         <h1 class="text-display-md font-heading font-bold mb-2">Skills</h1>

@@ -1,5 +1,6 @@
 <template>
   <div class="p-6 max-w-4xl">
+    <SettingsTabs />
     <h1 class="text-display-md font-heading font-bold mb-2">Git Connections</h1>
     <p class="text-text-secondary mb-8">
       Connect Git providers to push generated code to your own repositories.

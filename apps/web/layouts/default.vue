@@ -601,16 +601,16 @@ const buildNav = [
   { to: '/projects', label: 'Projects', icon: 'i-ph-folders-light' },
   { to: '/files',    label: 'Files',    icon: 'i-ph-file-code-light' },
   { to: '/agents',   label: 'Agents',   icon: 'i-ph-cube-light' },
+  { to: '/costs',    label: 'Costs',    icon: 'i-ph-currency-dollar-light' },
 ];
 
 const systemNav = [
-  { to: '/costs',                label: 'Costs',        icon: 'i-ph-currency-dollar-light' },
   { to: '/settings/connections', label: 'Connections',  icon: 'i-ph-plug-light' },
   { to: '/settings/ai',          label: 'AI Providers', icon: 'i-ph-brain-light' },
   { to: '/settings/skills',      label: 'Skills',       icon: 'i-ph-lightbulb-light' },
   { to: '/settings/knowledge',   label: 'Knowledge',    icon: 'i-ph-book-open-light' },
   { to: '/settings/workspace',   label: 'Workspace',    icon: 'i-ph-buildings-light' },
-  { to: '/settings',             label: 'Settings',     icon: 'i-ph-gear-six-light' },
+  { to: '/settings',             label: 'Account',      icon: 'i-ph-user-circle-light' },
 ];
 
 const allNav = computed(() => [...primaryNav.value, ...buildNav, ...systemNav]);

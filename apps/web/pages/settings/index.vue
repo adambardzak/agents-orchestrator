@@ -1,6 +1,7 @@
 <template>
   <div class="p-6 max-w-2xl">
-    <h1 class="text-display-md font-heading font-bold mb-2">Settings</h1>
+    <SettingsTabs />
+    <h1 class="text-display-md font-heading font-bold mb-2">Account</h1>
     <p class="text-text-secondary mb-8">Configure your GitHub token and orchestrator preferences.</p>
 
     <!-- GitHub Token -->

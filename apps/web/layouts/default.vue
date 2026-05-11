@@ -462,6 +462,9 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- Global completion burst overlay — listens for window 'task-complete-celebrate' -->
+    <CompletionBurst />
   </div>
 </template>
 
@@ -483,6 +486,7 @@ const auth         = useAuth();
 const config       = useRuntimeConfig();
 const route        = useRoute();
 const colorMode    = useColorMode();
+const toast        = useToast();
 
 // KB scope switcher (topbar)
 const { scope: kbScope, setScope: setKbScope } = useKbScope();
@@ -686,11 +690,35 @@ useAgentSocket({
       currentStep: payload.currentStep,
       maxSteps: payload.maxSteps,
     });
+    const task = sessionStore.tasks.find((t) => t.id === payload.taskId);
     if (payload.status === 'completed') {
-      const task = sessionStore.tasks.find((t) => t.id === payload.taskId);
       if (task?.agentType === 'document') {
         projectStore.notifyVaultUpdated();
       }
+      // Celebrate when the orchestrator (the root task) finishes — that
+      // signals the whole session is done from the user's POV.
+      if (task?.agentType === 'orchestrator') {
+        toast.add({
+          title:       'Task complete',
+          description: 'All agents finished. Check the results in the chat or Monitor.',
+          icon:        'i-ph-check-circle-fill',
+          color:       'green',
+          timeout:     6000,
+        });
+        // Fire a subtle visual burst centered on the viewport. CompletionBurst
+        // (mounted globally below) listens for this event.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('task-complete-celebrate'));
+        }
+      }
+    } else if (payload.status === 'failed' && task?.agentType === 'orchestrator') {
+      toast.add({
+        title:       'Task failed',
+        description: 'The orchestrator hit an unrecoverable error. See Monitor for details.',
+        icon:        'i-ph-warning-octagon-fill',
+        color:       'red',
+        timeout:     8000,
+      });
     }
   },
 

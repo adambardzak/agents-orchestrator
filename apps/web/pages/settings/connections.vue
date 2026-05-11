@@ -13,9 +13,8 @@
         <h2 class="font-semibold">Available providers</h2>
       </div>
 
-      <div v-if="providersLoading" class="flex items-center gap-2 text-sm text-text-muted">
-        <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-        Loading providers...
+      <div v-if="providersLoading" class="flex flex-wrap gap-3">
+        <Skeleton v-for="n in 3" :key="n" class="h-9 w-40" />
       </div>
       <div v-else-if="providers.length === 0">
         <EmptyState
@@ -53,9 +52,8 @@
         </UBadge>
       </div>
 
-      <div v-if="connectionsLoading" class="flex items-center gap-2 text-sm text-text-muted">
-        <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-        Loading connections...
+      <div v-if="connectionsLoading" class="space-y-3">
+        <Skeleton v-for="n in 2" :key="n" class="h-20" />
       </div>
       <EmptyState
         v-else-if="connections.length === 0"

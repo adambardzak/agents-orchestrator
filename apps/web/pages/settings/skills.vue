@@ -46,9 +46,8 @@
     </div>
 
     <section>
-      <div v-if="loading" class="flex items-center gap-2 text-sm text-text-muted">
-        <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-        Loading skills...
+      <div v-if="loading" class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <Skeleton v-for="n in 6" :key="n" class="h-32" />
       </div>
       <EmptyState
         v-else-if="filteredSkills.length === 0"

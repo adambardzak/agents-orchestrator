@@ -8,9 +8,8 @@
       <UButton icon="i-ph-plus-light" @click="openCreateEditor">New Agent</UButton>
     </div>
 
-    <div v-if="loading" class="text-center py-16 text-text-muted">
-      <UIcon name="i-ph-circle-notch-light" class="w-5 h-5 animate-spin mx-auto mb-2" />
-      Loading agents...
+    <div v-if="loading" class="space-y-2">
+      <Skeleton v-for="n in 5" :key="n" class="h-[76px]" />
     </div>
 
     <div v-else class="space-y-2">

@@ -23,11 +23,7 @@
 
     <!-- Loading skeleton -->
     <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      <div
-        v-for="n in 3"
-        :key="n"
-        class="h-44 rounded-md bg-surface-elevated border border-border animate-pulse"
-      />
+      <Skeleton v-for="n in 6" :key="n" class="h-44" />
     </div>
 
     <!-- Empty state -->

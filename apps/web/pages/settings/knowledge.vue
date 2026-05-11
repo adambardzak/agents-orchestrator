@@ -27,9 +27,16 @@
       <UButton icon="i-ph-plus-light" @click="openAddModal()">New document</UButton>
     </div>
 
-    <div v-if="loading" class="mt-8 flex items-center gap-2 text-sm text-text-muted">
-      <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-      Loading documents...
+    <div v-if="loading" class="mt-6 grid grid-cols-12 gap-6">
+      <aside class="col-span-4 lg:col-span-3 space-y-1.5 pr-4 border-r border-border">
+        <Skeleton class="h-8 mb-3" />
+        <Skeleton v-for="n in 8" :key="n" class="h-6" />
+      </aside>
+      <section class="col-span-8 lg:col-span-9 space-y-3">
+        <Skeleton class="h-6 w-1/2" />
+        <Skeleton class="h-4 w-1/3" />
+        <Skeleton class="h-96 mt-4" />
+      </section>
     </div>
 
     <EmptyState

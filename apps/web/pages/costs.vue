@@ -18,9 +18,16 @@
       </div>
     </div>
 
-    <div v-if="loading && !data" class="flex items-center justify-center py-24 text-text-muted">
-      <UIcon name="i-ph-circle-notch-light" class="w-6 h-6 animate-spin mr-2" />
-      Loading cost data...
+    <div v-if="loading && !data" class="space-y-6">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Skeleton v-for="n in 4" :key="n" class="h-20" />
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Skeleton class="h-72" />
+        <Skeleton class="h-72" />
+      </div>
+      <Skeleton class="h-48" />
+      <Skeleton class="h-96" />
     </div>
 
     <template v-else-if="data">

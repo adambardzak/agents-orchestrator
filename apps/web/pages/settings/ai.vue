@@ -13,9 +13,8 @@
 
     <!-- List of configured providers -->
     <section class="mt-8">
-      <div v-if="loading" class="flex items-center gap-2 text-sm text-text-muted">
-        <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-        Loading providers...
+      <div v-if="loading" class="space-y-2">
+        <Skeleton v-for="n in 3" :key="n" class="h-[72px]" />
       </div>
       <div v-else-if="providers.length === 0">
         <EmptyState

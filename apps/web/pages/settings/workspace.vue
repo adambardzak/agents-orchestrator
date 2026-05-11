@@ -9,10 +9,13 @@
     </div>
 
     <!-- No active workspace -->
-    <div v-if="!org" class="border border-dashed border-border rounded-md p-8 text-center">
-      <UIcon name="i-ph-buildings-light" class="w-10 h-10 mx-auto text-text-muted mb-3" />
-      <p class="text-text-secondary">No workspace is currently active.</p>
-    </div>
+    <EmptyState
+      v-if="!org"
+      icon="i-ph-buildings-light"
+      title="No workspace is currently active"
+      description="Switch between workspaces from the sidebar selector at the top."
+      size="sm"
+    />
 
     <template v-else>
       <!-- Active workspace banner -->
@@ -74,9 +77,8 @@
         </div>
         <p class="text-sm text-text-secondary mb-4">People who can access this workspace.</p>
 
-        <div v-if="loadingMembers" class="flex items-center gap-2 text-sm text-text-muted">
-          <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-          Loading members...
+        <div v-if="loadingMembers" class="space-y-2">
+          <Skeleton v-for="n in 3" :key="n" class="h-12" />
         </div>
 
         <div v-else class="divide-y divide-border border border-border rounded-md overflow-hidden">
@@ -153,16 +155,15 @@
         </div>
 
         <!-- Pending list -->
-        <div v-if="loadingInvitations" class="flex items-center gap-2 text-sm text-text-muted">
-          <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
-          Loading invitations...
+        <div v-if="loadingInvitations" class="space-y-2">
+          <Skeleton v-for="n in 2" :key="n" class="h-12" />
         </div>
-        <div
+        <EmptyState
           v-else-if="pendingInvitations.length === 0"
-          class="text-xs text-text-muted italic border border-dashed border-border rounded-md p-4 text-center"
-        >
-          No pending invitations.
-        </div>
+          icon="i-ph-envelope-light"
+          title="No pending invitations"
+          size="sm"
+        />
         <div v-else class="divide-y divide-border border border-border rounded-md overflow-hidden">
           <div
             v-for="inv in pendingInvitations"

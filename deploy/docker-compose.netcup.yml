@@ -120,13 +120,13 @@ services:
       /home/coder/workspaces
     networks: [orchestrator-net]
 
-  # ─── Caddy reverse proxy w/ basic auth ──────────────────────────
+  # ─── Caddy reverse proxy ────────────────────────────────────────
   # Public ports:
-  #   :8091 → web (Nuxt) + /api/* + /ws/* proxied to api
-  #   :8092 → code-server (its own auth, no basic auth needed)
-  # NOTE: BASIC_AUTH_HASH is a bcrypt hash. The .env entry MUST escape
-  #       every `$` as `$$` (compose interpolation) — e.g.
-  #       BASIC_AUTH_HASH=$$2a$$14$$abcdef...
+  #   :80  → ACME HTTP-01 challenge + redirect to HTTPS
+  #   :443 → HTTPS (web, /api/*, /ws/*, /code/*); LE certs managed by Caddy
+  #
+  # Auth is handled by Better Auth at the app layer (and forward_auth for
+  # /code/*). The previous Caddy basic_auth has been removed.
   caddy:
     image: caddy:2-alpine
     container_name: orchestrator-caddy
@@ -135,15 +135,13 @@ services:
       - "0.0.0.0:80:80"
       - "0.0.0.0:443:443"
       - "0.0.0.0:443:443/udp"
-      - "0.0.0.0:8091:8091"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-admin}
-      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
-      # Comma-separated CIDR allowlist; default 0.0.0.0/0 allows all if unset.
+      # Optional emergency IP allowlist (comma-separated CIDRs). Default
+      # 0.0.0.0/0 = allow all. Read by the (app_routes) snippet in Caddyfile.
       ALLOWED_IPS: ${ALLOWED_IPS:-0.0.0.0/0}
     depends_on: [web, api]
     networks: [orchestrator-net]

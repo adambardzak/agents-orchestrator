@@ -1,123 +1,77 @@
-# Deployment to VPS
+# Deploy
 
-Single-server deployment using Docker Compose, behind nginx with basic auth.
+Production stack lives on Netcup VPS at **https://agents.appitect.eu**.
+Everything is plain Docker Compose + Caddy + GitHub Actions CI/CD —
+no Kubernetes, no nginx, no basic-auth wrappers.
 
-**Target**: `deploy@46.62.209.17`, exposed at `http://46.62.209.17:8091`
+## Files
 
-## Status
+| file                          | purpose                                                          |
+|-------------------------------|------------------------------------------------------------------|
+| `docker-compose.netcup.yml`   | Production stack: postgres, redis, api, web, code-server, caddy. |
+| `Caddyfile`                   | TLS termination + reverse proxy + `/code/*` forward-auth gate.   |
 
-| Component       | Status                                                              |
-|-----------------|---------------------------------------------------------------------|
-| Source on VPS   | ✅ `/home/deploy/agent-orchestrator/`                               |
-| `.env`          | ✅ created (random PG password, GITHUB_TOKEN set)                   |
-| OpenCode auth   | ✅ in volume `agent-orchestrator_opencode_auth`                     |
-| API container   | ✅ healthy at `127.0.0.1:33002`                                     |
-| Web container   | ✅ HTTP 200 at `127.0.0.1:33010`                                    |
-| Postgres        | ✅ `127.0.0.1:5438` (volume `postgres_data`)                        |
-| Redis           | ✅ `127.0.0.1:6383` (volume `redis_data`)                           |
-| nginx vhost     | ⏳ **TODO — manual sudo step below**                                |
-| Basic-auth file | ⏳ **TODO — manual sudo step below**                                |
-| UFW port 8091   | ⏳ **TODO — manual sudo step below (only if ufw is enabled)**       |
+## Layout on the VPS
 
-## Final manual setup (needs sudo password)
-
-SSH into the VPS and run:
-
-```bash
-ssh deploy@46.62.209.17
-sudo apt-get update && sudo apt-get install -y apache2-utils
-sudo htpasswd -c /etc/nginx/.htpasswd-orchestrator admin   # set password
-
-sudo cp /home/deploy/agent-orchestrator/deploy/nginx-orchestrator.conf \
-        /etc/nginx/sites-available/orchestrator
-sudo ln -sf /etc/nginx/sites-available/orchestrator \
-            /etc/nginx/sites-enabled/orchestrator
-sudo nginx -t && sudo systemctl reload nginx
-
-sudo ufw allow 8091/tcp 2>/dev/null || true   # if ufw is on
+```
+/opt/agent-orchestrator/
+├── .env                       # Production secrets (NOT in git)
+├── compose/
+│   ├── docker-compose.netcup.yml
+│   └── Caddyfile
+├── workspaces/                # Mounted into api + code-server containers
+├── backups/                   # PG dumps (cron + restic — TODO)
+└── migrations/                # SQL migrations applied to PG
 ```
 
-Then browse to `http://46.62.209.17:8091` (login: `admin` + your htpasswd password).
+## Deployment flow
 
-## Day-to-day deployment from your laptop
+Code lands on `main` → GitHub Actions (`.github/workflows/deploy.yml`):
 
-```bash
-./deploy/deploy.sh           # rsync source + rebuild + restart
-./deploy/deploy.sh logs api  # tail API logs
-./deploy/deploy.sh logs web
-./deploy/deploy.sh ps        # container status
-./deploy/deploy.sh restart api
-./deploy/deploy.sh down      # stop everything
-```
+1. Builds `ghcr.io/adambardzak/agent-orchestrator-{api,web}:latest` images.
+2. SSHs into `deploy@159.195.27.128`.
+3. `docker compose pull && docker compose up -d --remove-orphans`.
+4. Smoke test against `https://agents.appitect.eu/api/health`.
 
-## OpenCode auth refresh
-
-If GitHub Copilot OAuth rotates (or you regenerate locally):
+Manual restart (rarely needed):
 
 ```bash
-scp ~/.local/share/opencode/auth.json \
-    deploy@46.62.209.17:/home/deploy/agent-orchestrator/.opencode-auth.json
-ssh deploy@46.62.209.17 \
-  "docker run --rm \
-     -v agent-orchestrator_opencode_auth:/dst \
-     -v /home/deploy/agent-orchestrator/.opencode-auth.json:/src/auth.json:ro \
-     busybox cp /src/auth.json /dst/auth.json"
-ssh deploy@46.62.209.17 \
-  "cd /home/deploy/agent-orchestrator && docker compose -f docker-compose.prod.yml restart api"
+ssh deploy@159.195.27.128
+cd /opt/agent-orchestrator/compose
+docker compose -f docker-compose.netcup.yml --env-file ../.env up -d --no-deps api
+# Or to reload Caddy after Caddyfile edit:
+docker exec orchestrator-caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
-Also update `GITHUB_TOKEN` in `/home/deploy/agent-orchestrator/.env` if it changed.
+## Public ports
 
-## Ports used on VPS
+| port | exposed to | purpose                                  |
+|------|------------|------------------------------------------|
+| 22   | UFW        | SSH (key-only)                           |
+| 80   | UFW        | ACME HTTP-01 + redirect → 443            |
+| 443  | UFW        | HTTPS (TCP + UDP for HTTP/3)             |
 
-| Service     | Bind                    | External (via nginx)              |
-|-------------|-------------------------|-----------------------------------|
-| nginx vhost (app)  | `0.0.0.0:8091`   | `http://46.62.209.17:8091`        |
-| nginx vhost (code) | `0.0.0.0:8092`   | `http://46.62.209.17:8092`        |
-| API         | `127.0.0.1:33002`       | `/api/*`, `/ws`                   |
-| Web (Nuxt)  | `127.0.0.1:33010`       | `/`                               |
-| code-server | `127.0.0.1:8092`        | `:8092/` (web VS Code)            |
-| Postgres    | `127.0.0.1:5438`        | (internal only)                   |
-| Redis       | `127.0.0.1:6383`        | (internal only)                   |
+All container ports (`33002` api, `33010` web, `5438` postgres,
+`6383` redis) are bound to `127.0.0.1` only.
 
-## code-server (web VS Code)
+## Required `.env` keys
 
-`docker-compose.prod.yml` includes a `code-server` service mounting the
-shared `workspaces` Docker volume read-write (same volume the API writes
-to). The API container exposes its `CODE_SERVER_URL` to the frontend via
-`/api/projects` so the dashboard can deep-link `Open in VS Code` to the
-correct workspace folder and file.
+See `apps/api/src/config/env.ts` for the full Zod schema. The minimum
+production set:
 
-After the first deploy, configure nginx for the second vhost:
-
-```bash
-ssh deploy@46.62.209.17
-sudo cp /home/deploy/agent-orchestrator/deploy/nginx-orchestrator.conf \
-        /etc/nginx/sites-available/orchestrator
-sudo nginx -t && sudo systemctl reload nginx
-sudo ufw allow 8092/tcp 2>/dev/null || true
 ```
-
-Then browse to `http://46.62.209.17:8092` (basic auth: same `admin`
-credentials; then code-server's own password prompt = value of
-`CODE_SERVER_PASSWORD` in `.env`, default `Vandl123`).
-
-Deep-link format used by the dashboard:
-`http://46.62.209.17:8092/?folder=/home/coder/workspaces/<sessionId>&payload=<base64-json-with-openFile>`
-
-## Updating
-
-`deploy.sh` runs an incremental rsync (excludes `node_modules`, build output,
-`.git`, `.env`, opencode auth file), then `docker compose build` (uses layer
-cache), then `up -d` which only restarts changed containers. Migrations run
-automatically on API start (`runMigrations` in `apps/api/src/index.ts`).
-
-## Troubleshooting
-
-- **API not reachable**: `curl http://127.0.0.1:33002/health` on the VPS
-- **API restarting**: `./deploy/deploy.sh logs api`
-- **Web 502 from nginx**: API container down — check above
-- **WebSocket fails**: confirm `/ws` route in nginx, check browser console
-- **basic auth prompt loops**: regenerate `/etc/nginx/.htpasswd-orchestrator`
-- **OpenCode "no auth"**: re-copy `auth.json` (token may have rotated)
-- **DB issues**: `docker exec -it orchestrator-postgres psql -U orchestrator`
+NODE_ENV=production
+APP_URL=https://agents.appitect.eu
+CORS_ORIGINS=https://agents.appitect.eu
+CODE_SERVER_URL=https://agents.appitect.eu/code
+PUBLIC_API_BASE=https://agents.appitect.eu
+PUBLIC_WS_BASE=wss://agents.appitect.eu
+GHCR_OWNER=adambardzak
+POSTGRES_PASSWORD=...                # 30+ chars
+BETTER_AUTH_SECRET=...               # 64 hex chars (openssl rand -hex 32)
+APP_ENCRYPTION_KEY=...               # 32 bytes base64 (openssl rand -base64 32)
+GITHUB_OAUTH_CLIENT_ID=              # optional, enables "Connect GitHub"
+GITHUB_OAUTH_CLIENT_SECRET=
+GITLAB_OAUTH_CLIENT_ID=              # optional, enables "Connect GitLab"
+GITLAB_OAUTH_CLIENT_SECRET=
+```

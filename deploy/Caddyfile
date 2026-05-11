@@ -3,13 +3,12 @@
 # Public surfaces:
 #   https://agents.appitect.eu        → web (Nuxt) + /api/* + /ws/* proxied to api  (LE TLS, auto)
 #   https://agents.appitect.eu/code/* → code-server, gated by Better Auth via forward_auth
-#   :8091                              → legacy plain-HTTP fallback (web + api), basic_auth removed
-#   (code-server is no longer exposed directly on :8092 — it lives only inside the docker network)
+#   (code-server is not exposed directly — it lives only inside the docker network)
 #
-# Auth: Better Auth (sign-in / sign-up / session) is the primary gate. The
-# previous Caddy basic_auth wrapper has been removed. /code/* is protected by
-# `forward_auth` against /api/auth/check, so only signed-in users can reach
-# the embedded code-server (which itself runs with --auth none internally).
+# Auth: Better Auth (sign-in / sign-up / session) is the primary gate.
+# /code/* is protected by `forward_auth` against /api/auth/check, so only
+# signed-in users can reach the embedded code-server (which itself runs
+# with --auth none internally).
 # Optional IP allowlist via $ALLOWED_IPS for emergency lock-down.
 
 {
@@ -76,13 +75,5 @@
 
 # ─── Production HTTPS (Let's Encrypt) ────────────────────────────────────────
 agents.appitect.eu {
-	import app_routes
-}
-
-# ─── Legacy plain-HTTP fallback on :8091 ─────────────────────────────────────
-# Kept temporarily so existing :8091 bookmarks / CI smoke checks continue to
-# work during the HTTPS migration. Remove once everything points at the
-# canonical hostname.
-:8091 {
 	import app_routes
 }

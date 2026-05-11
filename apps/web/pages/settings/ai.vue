@@ -17,8 +17,16 @@
         <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
         Loading providers...
       </div>
-      <div v-else-if="providers.length === 0" class="border border-dashed border-border rounded-md p-8 text-center text-text-muted">
-        No providers configured yet. Click "Add provider" to get started.
+      <div v-else-if="providers.length === 0">
+        <EmptyState
+          icon="i-ph-plugs-light"
+          title="No AI providers configured"
+          description="Connect Anthropic, OpenAI, GitHub Copilot or any other supported provider. API keys are encrypted with AES-256-GCM and never returned to the browser."
+          action-label="Add provider"
+          action-icon="i-ph-plus-light"
+          size="sm"
+          @action="openAddModal()"
+        />
       </div>
       <ul v-else class="space-y-2">
         <li

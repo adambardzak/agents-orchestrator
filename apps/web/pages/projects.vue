@@ -31,15 +31,15 @@
     </div>
 
     <!-- Empty state -->
-    <div
+    <EmptyState
       v-else-if="projects.length === 0"
-      class="flex flex-col items-center justify-center py-24 text-center"
-    >
-      <span class="text-5xl mb-4">📁</span>
-      <p class="font-semibold text-lg mb-1">No projects yet</p>
-      <p class="text-sm text-text-secondary mb-6">Create your first project to link a workspace directory.</p>
-      <UButton icon="i-ph-plus-light" @click="openNewProject">New Project</UButton>
-    </div>
+      icon="i-ph-folder-open-light"
+      title="No projects yet"
+      description="Create your first project to link a workspace directory."
+      action-label="New Project"
+      action-icon="i-ph-plus-light"
+      @action="openNewProject"
+    />
 
     <!-- Project grid -->
     <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

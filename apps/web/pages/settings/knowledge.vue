@@ -32,11 +32,15 @@
       Loading documents...
     </div>
 
-    <div v-else-if="documents.length === 0" class="mt-12 text-center">
-      <UIcon name="i-ph-book-open-light" class="w-12 h-12 mx-auto text-text-muted mb-3" />
-      <p class="text-text-secondary mb-4">No documents yet</p>
-      <UButton icon="i-ph-plus-light" @click="openAddModal()">Create your first document</UButton>
-    </div>
+    <EmptyState
+      v-else-if="documents.length === 0"
+      icon="i-ph-book-open-light"
+      title="No documents yet"
+      description="Add Markdown documents to your knowledge base — they'll be indexed and injected into agent prompts via similarity search."
+      action-label="Create your first document"
+      action-icon="i-ph-plus-light"
+      @action="openAddModal()"
+    />
 
     <div v-else class="mt-6 grid grid-cols-12 gap-6">
       <!-- Folder tree (left) -->

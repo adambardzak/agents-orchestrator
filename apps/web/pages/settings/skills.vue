@@ -50,10 +50,13 @@
         <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
         Loading skills...
       </div>
-      <div v-else-if="filteredSkills.length === 0" class="text-center py-12">
-        <UIcon name="i-ph-funnel-light" class="w-10 h-10 mx-auto text-text-muted mb-2" />
-        <p class="text-text-secondary">No skills match the current filter.</p>
-      </div>
+      <EmptyState
+        v-else-if="filteredSkills.length === 0"
+        icon="i-ph-funnel-light"
+        title="No skills match the current filter"
+        description="Try clearing the search or selecting a different category."
+        size="sm"
+      />
       <div v-else>
         <div v-for="group in groupedSkills" :key="group.label" class="mb-8">
           <h2 class="text-sm font-semibold uppercase tracking-wide text-text-muted mb-3 flex items-center gap-2">

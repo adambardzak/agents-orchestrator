@@ -189,9 +189,15 @@
               Manage them in <NuxtLink to="/settings/skills" class="text-accent hover:underline">Settings → Skills</NuxtLink>.
             </p>
             <div v-if="skillsLoading" class="text-xs text-text-muted">Loading skills...</div>
-            <div v-else-if="availableSkills.length === 0" class="text-xs text-text-muted italic border border-dashed border-border rounded-md p-4 text-center">
-              No skills available. Create some in
-              <NuxtLink to="/settings/skills" class="text-accent hover:underline">Settings → Skills</NuxtLink>.
+            <div v-else-if="availableSkills.length === 0" class="border border-dashed border-border rounded-md">
+              <EmptyState
+                icon="i-ph-lightbulb-light"
+                title="No skills available"
+                size="sm"
+              >
+                Create some in
+                <NuxtLink to="/settings/skills" class="text-accent hover:underline">Settings → Skills</NuxtLink>.
+              </EmptyState>
             </div>
             <template v-else>
               <!-- Category filter chips -->

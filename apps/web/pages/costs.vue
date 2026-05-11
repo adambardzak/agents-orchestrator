@@ -177,9 +177,16 @@
             </tr>
           </tbody>
         </table>
-        <div v-if="data.recentSessions.length === 0" class="text-center py-12 text-text-muted text-sm">
-          No sessions found. Start your first session from Chat.
-        </div>
+        <EmptyState
+          v-if="data.recentSessions.length === 0"
+          icon="i-ph-chart-line-light"
+          title="No sessions yet"
+          description="Start your first session from Chat. Token usage and costs will appear here."
+          action-label="Go to Chat"
+          action-icon="i-ph-chat-circle-light"
+          size="sm"
+          @action="$router.push('/')"
+        />
       </div>
     </template>
 

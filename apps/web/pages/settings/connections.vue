@@ -17,11 +17,17 @@
         <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
         Loading providers...
       </div>
-      <div v-else-if="providers.length === 0" class="text-sm text-pending">
-        No OAuth providers configured. Set
-        <code class="text-xs bg-surface px-1 py-0.5 rounded">GITHUB_OAUTH_CLIENT_ID</code> /
-        <code class="text-xs bg-surface px-1 py-0.5 rounded">_SECRET</code>
-        (and similarly for GitLab/Bitbucket) in the API <code>.env</code> and restart.
+      <div v-else-if="providers.length === 0">
+        <EmptyState
+          icon="i-ph-warning-light"
+          title="No OAuth providers configured"
+          size="sm"
+        >
+          Set
+          <code class="text-xs bg-surface px-1 py-0.5 rounded">GITHUB_OAUTH_CLIENT_ID</code> /
+          <code class="text-xs bg-surface px-1 py-0.5 rounded">_SECRET</code>
+          (and similarly for GitLab/Bitbucket) in the API <code>.env</code> and restart.
+        </EmptyState>
       </div>
       <div v-else class="flex flex-wrap gap-3">
         <UButton
@@ -51,9 +57,13 @@
         <UIcon name="i-ph-circle-notch-light" class="w-4 h-4 animate-spin" />
         Loading connections...
       </div>
-      <div v-else-if="connections.length === 0" class="text-sm text-text-muted">
-        No accounts connected yet. Click a provider above to start the OAuth flow.
-      </div>
+      <EmptyState
+        v-else-if="connections.length === 0"
+        icon="i-ph-link-break-light"
+        title="No accounts connected"
+        description="Click a provider above to start the OAuth flow and link your Git account."
+        size="sm"
+      />
       <ul v-else class="divide-y divide-border">
         <li
           v-for="conn in connections"

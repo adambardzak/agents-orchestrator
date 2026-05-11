@@ -55,11 +55,13 @@
       <!-- Vault: only .obsidian-vault/ files, grouped by type -->
       <div v-else class="flex-1 overflow-y-auto py-1">
         <div v-if="treeLoading" class="p-4 text-xs text-text-muted">Loading…</div>
-        <div v-else-if="!vaultFiles.length" class="p-4 text-center text-xs text-text-muted space-y-2">
-          <UIcon name="i-ph-book-open-light" class="w-8 h-8 mx-auto opacity-30" />
-          <p>No vault documents yet.</p>
-          <p class="opacity-60">Documents are created by the Document Agent after each session.</p>
-        </div>
+        <EmptyState
+          v-else-if="!vaultFiles.length"
+          icon="i-ph-book-open-light"
+          title="No vault documents yet"
+          description="Documents are created automatically by the Document Agent after each session."
+          size="sm"
+        />
         <template v-else>
           <!-- Daily notes -->
           <div v-if="vaultDaily.length">

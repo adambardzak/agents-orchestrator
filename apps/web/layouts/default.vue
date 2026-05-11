@@ -83,8 +83,8 @@
           v-for="item in primaryNav"
           :key="item.to"
           :to="item.to"
-          class="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition group"
-          active-class="!bg-surface-active !text-text-primary"
+          class="relative flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition group"
+          active-class="!bg-surface-active !text-text-primary nav-link-active"
         >
           <UIcon :name="item.icon" class="w-4 h-4 shrink-0" />
           <span class="flex-1 truncate">{{ item.label }}</span>
@@ -103,8 +103,8 @@
           v-for="item in buildNav"
           :key="item.to"
           :to="item.to"
-          class="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
-          active-class="!bg-surface-active !text-text-primary"
+          class="relative flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
+          active-class="!bg-surface-active !text-text-primary nav-link-active"
         >
           <UIcon :name="item.icon" class="w-4 h-4 shrink-0" />
           <span class="flex-1 truncate">{{ item.label }}</span>
@@ -117,8 +117,8 @@
           v-for="item in systemNav"
           :key="item.to"
           :to="item.to"
-          class="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
-          active-class="!bg-surface-active !text-text-primary"
+          class="relative flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition"
+          active-class="!bg-surface-active !text-text-primary nav-link-active"
         >
           <UIcon :name="item.icon" class="w-4 h-4 shrink-0" />
           <span class="flex-1 truncate">{{ item.label }}</span>
@@ -218,16 +218,25 @@
       >
         <!-- Breadcrumb / page title -->
         <div class="flex items-center gap-2 text-sm min-w-0 flex-1">
-          <UIcon
-            :name="currentNavIcon"
-            class="w-4 h-4 text-text-secondary shrink-0"
-          />
-          <span class="font-medium shrink-0">{{ currentNavLabel }}</span>
+          <NuxtLink
+            :to="currentNavItem?.to ?? '/'"
+            class="inline-flex items-center gap-2 shrink-0 rounded px-1 -mx-1 hover:bg-surface-hover transition-colors"
+          >
+            <UIcon
+              :name="currentNavIcon"
+              class="w-4 h-4 text-text-secondary"
+            />
+            <span class="font-medium">{{ currentNavLabel }}</span>
+          </NuxtLink>
           <template v-if="projectStore.activeProject">
             <span class="text-text-faint shrink-0">/</span>
-            <span class="text-text-secondary truncate min-w-0">
+            <NuxtLink
+              to="/projects"
+              class="text-text-secondary truncate min-w-0 hover:text-text-primary hover:underline transition-colors"
+              :title="`Switch project (currently: ${projectStore.activeProject.name})`"
+            >
               {{ projectStore.activeProject.name }}
-            </span>
+            </NuxtLink>
           </template>
         </div>
 

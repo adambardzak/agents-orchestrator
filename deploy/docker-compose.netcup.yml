@@ -54,6 +54,22 @@ services:
       LOG_LEVEL:        ${LOG_LEVEL:-info}
       CODE_SERVER_URL:  ${CODE_SERVER_URL}
       AUTH_COOKIES_SECURE: ${AUTH_COOKIES_SECURE:-true}
+      # ── Auth & token-at-rest crypto ────────────────────────────────
+      # APP_URL is the public origin used to build OAuth callback URLs
+      # (e.g. https://agents.appitect.eu/api/git/callback/github).
+      APP_URL:               ${APP_URL}
+      BETTER_AUTH_SECRET:    ${BETTER_AUTH_SECRET}
+      APP_ENCRYPTION_KEY:    ${APP_ENCRYPTION_KEY}
+      # ── Git provider OAuth (per-user connections in /settings/connections)
+      # Each pair is optional — providers without creds simply don't show up
+      # in the UI. Registry builds providers lazily from these envs.
+      GITHUB_OAUTH_CLIENT_ID:     ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GITLAB_OAUTH_CLIENT_ID:     ${GITLAB_OAUTH_CLIENT_ID:-}
+      GITLAB_OAUTH_CLIENT_SECRET: ${GITLAB_OAUTH_CLIENT_SECRET:-}
+      GITLAB_API_BASE:            ${GITLAB_API_BASE:-}
+      BITBUCKET_OAUTH_CLIENT_ID:     ${BITBUCKET_OAUTH_CLIENT_ID:-}
+      BITBUCKET_OAUTH_CLIENT_SECRET: ${BITBUCKET_OAUTH_CLIENT_SECRET:-}
     volumes:
       - workspaces:/workspaces
       - opencode_auth:/root/.local/share/opencode

@@ -12,6 +12,13 @@
       <Skeleton v-for="n in 5" :key="n" class="h-[76px]" />
     </div>
 
+    <ErrorState
+      v-else-if="loadError"
+      title="Couldn't load agents"
+      :description="loadError"
+      @retry="loadAgents"
+    />
+
     <div v-else class="space-y-2">
       <div
         v-for="agent in agents"
@@ -368,6 +375,7 @@ interface McpCategoryEntry { id: string; label: string; icon: string; }
 const apiStore = useOrchestratorApi();
 const agents = ref<AgentDefinition[]>([]);
 const loading = ref(true);
+const loadError = ref<string>('');
 const showEditor = ref(false);
 const saving = ref(false);
 const editingAgent = ref<AgentDefinition | null>(null);
@@ -522,16 +530,21 @@ const isReadOnly = computed(() => editingAgent.value?.isBuiltIn ?? false);
 
 // ── Load ──────────────────────────────────────────────────────────────────
 
-onMounted(async () => {
+async function loadAgents(): Promise<void> {
+  loading.value = true;
+  loadError.value = '';
   try {
     const res = await apiStore.listAgents();
     agents.value = res.agents;
   } catch (e) {
+    loadError.value = (e as Error).message;
     console.error(e);
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(loadAgents);
 
 // ── Open/close editor ──────────────────────────────────────────────────────
 

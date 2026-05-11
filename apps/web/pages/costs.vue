@@ -197,10 +197,11 @@
       </div>
     </template>
 
-    <div v-if="error" class="text-center py-16 text-failed">
-      <UIcon name="i-ph-warning-light" class="w-6 h-6 mx-auto mb-2" />
-      {{ error }}
-    </div>
+    <ErrorState
+      v-if="error"
+      :description="error"
+      @retry="load"
+    />
   </div>
 </template>
 

@@ -40,7 +40,12 @@
           </button>
         </div>
         <div v-if="treeLoading" class="p-4 text-xs text-text-muted">Loading…</div>
-        <div v-else-if="treeError" class="p-4 text-xs text-failed">{{ treeError }}</div>
+        <ErrorState
+          v-else-if="treeError"
+          :description="treeError"
+          size="sm"
+          @retry="loadTree"
+        />
         <div v-else-if="!fileTree.length" class="p-4 text-xs text-text-muted">No files.</div>
         <FileTreeNode
           v-for="node in fileTree"

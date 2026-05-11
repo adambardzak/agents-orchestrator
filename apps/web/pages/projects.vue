@@ -26,6 +26,14 @@
       <Skeleton v-for="n in 6" :key="n" class="h-44" />
     </div>
 
+    <!-- Error state -->
+    <ErrorState
+      v-else-if="loadError"
+      title="Couldn't load projects"
+      :description="loadError"
+      @retry="loadProjects"
+    />
+
     <!-- Empty state -->
     <EmptyState
       v-else-if="projects.length === 0"
@@ -285,10 +293,12 @@ const { buildLink: buildCodeServerLink } = useCodeServerLink();
 
 const projects = computed(() => projectStore.projects);
 const loading = ref(false);
+const loadError = ref<string>('');
 
 // ── Load projects ─────────────────────────────────────────────────────────────
-onMounted(async () => {
+async function loadProjects(): Promise<void> {
   loading.value = true;
+  loadError.value = '';
   try {
     const { projects: list, codeServerUrl: serverUrl } = await api.listProjects();
     projectStore.setProjects(list);
@@ -297,10 +307,14 @@ onMounted(async () => {
       // store in a composable-level ref for this page; nuxt config is the fallback
       backendCodeServerUrl.value = serverUrl;
     }
+  } catch (err) {
+    loadError.value = (err as Error).message;
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(loadProjects);
 
 // code-server URL: backend takes precedence over runtimeConfig
 const backendCodeServerUrl = ref<string>('');

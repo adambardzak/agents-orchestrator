@@ -474,6 +474,9 @@
 
     <!-- Global completion burst overlay — listens for window 'task-complete-celebrate' -->
     <CompletionBurst />
+
+    <!-- First-run onboarding checklist — hides after dismissal or all steps done -->
+    <OnboardingOverlay />
   </div>
 </template>
 

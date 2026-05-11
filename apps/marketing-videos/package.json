@@ -1,0 +1,26 @@
+{
+  "name": "marketing-videos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Brand motion graphics for social (reels 9:16) and square (1:1). Rendered with Remotion.",
+  "scripts": {
+    "dev": "remotion studio",
+    "studio": "remotion studio",
+    "render:reels": "remotion render genesis-reels out/genesis-reels.mp4",
+    "render:square": "remotion render genesis-square out/genesis-square.mp4",
+    "render:all": "pnpm run render:reels && pnpm run render:square",
+    "type-check": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "remotion": "4.0.380",
+    "@remotion/cli": "4.0.380",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.5.0"
+  }
+}

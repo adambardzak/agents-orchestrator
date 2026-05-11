@@ -23,3 +23,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Marketing video renders
+renders/
+.render-frames/
